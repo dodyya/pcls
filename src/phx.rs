@@ -92,10 +92,17 @@ impl HashGrid {
             if let Some(cell) = self.grid.get_mut(&old_key) {
                 if let Some(pos) = cell.iter().position(|&i| i == index) {
                     cell.swap_remove(pos);
+                    if cell.is_empty() {
+                        self.grid.remove(&old_key);
+                    }
                 }
             }
             self.grid.entry(new_key).or_default().push(index);
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.grid.clear();
     }
 }
 

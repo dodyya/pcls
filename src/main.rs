@@ -18,10 +18,7 @@ fn main() {
     // Create graphics and simulation.
     let (mut gfx, event_loop) = Gfx::new(1200, 1200);
 
-    // Create some initial particles.
-    let mut particles = Vec::new();
-
-    let mut simulation = Phx::new(PARTICLE_SIZE * 2.0, particles);
+    let mut simulation = Phx::new(PARTICLE_SIZE * 2.0, vec![]);
 
     // We'll track the last known cursor position and whether the mouse is pressed.
     let mut last_cursor_pos: Option<(f32, f32)> = None;
@@ -43,10 +40,14 @@ fn main() {
                 WindowEvent::CursorMoved { position, .. } => {
                     last_cursor_pos = Some((position.x as f32, position.y as f32));
                 }
-                // When the left mouse button is pressed or released, update our flag.
+                // When the left or right mouse button is pressed or released, update our flag.
                 WindowEvent::MouseInput { state, button, .. } => {
                     if *button == MouseButton::Left {
                         mouse_down = *state == ElementState::Pressed;
+                    } else if *button == MouseButton::Right && *state == ElementState::Pressed {
+                        // Clear all particles on right-click
+                        simulation.particles.clear();
+                        simulation.grid.clear();
                     }
                 }
                 _ => {}
@@ -83,9 +84,13 @@ fn main() {
                         simulation.grid.insert(new_index, &new_particle);
                     }
                 }
+                //Begin timing
+                let start = std::time::Instant::now();
 
                 // Run simulation update.
                 simulation.update();
+                // Print how long update took
+                println!("Update took: {:?}", start.elapsed());
 
                 let particles_draw: Vec<(f32, f32, f32)> = simulation.get_drawable_particles();
 
