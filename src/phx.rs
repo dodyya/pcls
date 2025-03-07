@@ -22,7 +22,7 @@ impl Particle {
 
 // Constant wall damping coefficient:
 const WALL_DAMPING: f32 = 0.9;
-const VELOCITY_DAMPING: f32 = 0.99;
+const VELOCITY_DAMPING: f32 = 1.00;
 const RESTITUTION: f32 = 0.5;
 const GRAVITY: Vec2<f32> = Vec2 { x: 0.0, y: -0.001 };
 const COLLISION_DAMPING: f32 = 1.00;
@@ -198,8 +198,8 @@ impl Phx {
         let b_inv = 1.0 / self.particles[j].mass;
         let impulse_mag = -(1.0 + RESTITUTION) * velocity_along_normal / (a_inv + b_inv);
         let impulse = normal * impulse_mag * COLLISION_DAMPING;
-        self.particles[i].velocity = self.particles[i].velocity + impulse * a_inv;
-        self.particles[j].velocity = self.particles[j].velocity - impulse * b_inv;
+        self.particles[i].velocity += impulse * a_inv;
+        self.particles[j].velocity -= impulse * b_inv;
     }
 
     /// Apply velocity damping to all particles.
@@ -283,16 +283,15 @@ impl Phx {
         self.resolve_wall_collisions();
         self.resolve_collisions();
         self.apply_velocity_damping();
-        self.apply_gravity();
-        self.resolve_overlaps(20);
+        // self.apply_gravity();
+        self.resolve_overlaps(3);
     }
 
     pub fn get_drawable_particles(&self) -> Vec<(f32, f32, f32)> {
-        return self
-            .particles
+        self.particles
             .iter()
             .map(|p| (p.center.x, p.center.y, p.radius))
-            .collect();
+            .collect()
     }
 }
 
@@ -396,7 +395,7 @@ mod tests {
         };
 
         let particles = vec![particle1.clone(), particle2.clone()];
-        let mut phx = Phx::new(10.0, particles);
+        let phx = Phx::new(10.0, particles);
 
         // Check that grid contains both particle indices.
         let key = phx.grid.get_grid_key(15.0, 25.0);

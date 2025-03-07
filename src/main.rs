@@ -4,28 +4,31 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+//random
 
 mod gfx;
 mod phx;
 use gfx::Gfx;
 use phx::{Particle, Phx, Vec2};
+use rand::Rng;
 
-const PARTICLE_SIZE: f32 = 0.1;
+const PARTICLE_SIZE: f32 = 0.01;
 
 fn main() {
     // Create graphics and simulation.
     let (mut gfx, event_loop) = Gfx::new(1200, 1200);
 
     // Create some initial particles.
-    // Make 100 particles in a loop.
     let mut particles = Vec::new();
 
     let mut simulation = Phx::new(PARTICLE_SIZE * 2.0, particles);
 
-    // We'll track the last known cursor position.
+    // We'll track the last known cursor position and whether the mouse is pressed.
     let mut last_cursor_pos: Option<(f32, f32)> = None;
-    // Our window size in pixels.
+    let mut mouse_down = false;
     let window_size = 1200.0;
+
+    let mut rng = rand::thread_rng();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -36,43 +39,54 @@ fn main() {
                     *control_flow = ControlFlow::Exit;
                     return;
                 }
-                // Update last_cursor_pos when the mouse moves.
+                // Update the last cursor position.
                 WindowEvent::CursorMoved { position, .. } => {
                     last_cursor_pos = Some((position.x as f32, position.y as f32));
                 }
-                // On left mouse click, add a new particle.
+                // When the left mouse button is pressed or released, update our flag.
                 WindowEvent::MouseInput { state, button, .. } => {
-                    if *state == ElementState::Pressed && *button == MouseButton::Left {
-                        if let Some((cursor_x, cursor_y)) = last_cursor_pos {
-                            // Convert from window coordinates (0 to 1200) to simulation coordinates (-1 to 1).
-                            // Note: we flip y because window y=0 is at the top.
-                            let sim_x = (cursor_x / window_size) * 2.0 - 1.0;
-                            let sim_y = 1.0 - (cursor_y / window_size) * 2.0;
-
-                            let new_particle = Particle {
-                                center: Vec2 { x: sim_x, y: sim_y },
-                                radius: PARTICLE_SIZE,
-                                // For now, new particles start at rest.
-                                velocity: Vec2 { x: 0.0, y: 0.0 },
-                                mass: 1.0,
-                            };
-
-                            // Push the new particle into the simulation.
-                            simulation.particles.push(new_particle.clone());
-                            // Its index is the last index in the vector.
-                            let new_index = simulation.particles.len() - 1;
-                            // Insert into the hash grid.
-                            simulation.grid.insert(new_index, &new_particle);
-                        }
+                    if *button == MouseButton::Left {
+                        mouse_down = *state == ElementState::Pressed;
                     }
                 }
                 _ => {}
             },
             Event::RedrawRequested(_) => {
+                // Optionally, add a new particle every frame while dragging.
+                if mouse_down {
+                    if let Some((cursor_x, cursor_y)) = last_cursor_pos {
+                        // Convert window coordinates (0 to 1200) to simulation coordinates (-1 to 1).
+                        // If mouse is outside window, return
+                        if cursor_x < 0.0
+                            || cursor_x > window_size
+                            || cursor_y < 0.0
+                            || cursor_y > window_size
+                        {
+                            return;
+                        }
+                        let sim_x = (cursor_x / window_size) * 2.0 - 1.0;
+                        let sim_y = 1.0 - (cursor_y / window_size) * 2.0;
+
+                        let new_particle = Particle {
+                            center: Vec2 { x: sim_x, y: sim_y },
+                            radius: PARTICLE_SIZE,
+                            // Random velocity
+                            velocity: Vec2 {
+                                x: rng.gen_range(-0.01..0.01),
+                                y: rng.gen_range(-0.01..0.01),
+                            },
+                            mass: 1.0,
+                        };
+
+                        simulation.particles.push(new_particle.clone());
+                        let new_index = simulation.particles.len() - 1;
+                        simulation.grid.insert(new_index, &new_particle);
+                    }
+                }
+
                 // Run simulation update.
                 simulation.update();
 
-                // Prepare drawing.
                 let particles_draw: Vec<(f32, f32, f32)> = simulation.get_drawable_particles();
 
                 gfx.clear_frame();
