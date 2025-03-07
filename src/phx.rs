@@ -283,7 +283,7 @@ impl Phx {
         self.resolve_wall_collisions();
         self.resolve_collisions();
         self.apply_velocity_damping();
-        // self.apply_gravity();
+        self.apply_gravity();
         self.resolve_overlaps(3);
     }
 
