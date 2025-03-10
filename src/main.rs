@@ -1,8 +1,6 @@
 use winit::{
-    dpi::PhysicalSize,
     event::{ElementState, Event, MouseButton, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    event_loop::ControlFlow,
 };
 //random
 
@@ -85,12 +83,12 @@ fn main() {
                     }
                 }
                 //Begin timing
-                let start = std::time::Instant::now();
+                // let start = std::time::Instant::now();
 
                 // Run simulation update.
                 simulation.update();
                 // Print how long update took
-                println!("Update took: {:?}", start.elapsed());
+                // println!("Update took: {:?}", start.elapsed());
 
                 let particles_draw: Vec<(f32, f32, f32)> = simulation.get_drawable_particles();
 
