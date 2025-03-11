@@ -1,39 +1,75 @@
+use dashmap::DashMap;
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
+    io::stdin,
     ops::{Add, AddAssign, Div, Mul, Sub, SubAssign},
+    sync::Mutex,
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Particle {
-    pub center: Vec2<f32>,
-    pub radius: f32,
-    pub velocity: Vec2<f32>,
-    pub mass: f32,
+pub struct Particles {
+    pub center_x: Vec<f32>,
+    pub center_y: Vec<f32>,
+    pub radius: Vec<f32>,
+    pub velocity_x: Vec<f32>,
+    pub velocity_y: Vec<f32>,
+    pub mass: Vec<f32>,
 }
 
-impl Particle {
-    fn overlap(&self, other: &Particle) -> (bool, f32) {
-        let delta = self.center - other.center;
-        let distance_sq = delta.magnitude_sq();
-        let radius_sum = self.radius + other.radius;
+impl Particles {
+    fn overlap(&self, i1: usize, i2: usize) -> (bool, f32) {
+        let dx = self.center_x[i1] - self.center_x[i2];
+        let dy = self.center_y[i1] - self.center_y[i2];
+        let distance_sq = dx * dx + dy * dy;
+        let radius_sum = self.radius[i1] + self.radius[i2];
         (distance_sq < radius_sum * radius_sum, distance_sq)
     }
-}
 
+    pub fn clear(&mut self) {
+        self.center_x.clear();
+        self.center_y.clear();
+        self.radius.clear();
+        self.velocity_x.clear();
+        self.velocity_y.clear();
+        self.mass.clear();
+    }
+
+    pub fn push(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        velocity_x: f32,
+        velocity_y: f32,
+        mass: f32,
+    ) {
+        self.center_x.push(center_x);
+        self.center_y.push(center_y);
+        self.radius.push(radius);
+        self.velocity_x.push(velocity_x);
+        self.velocity_y.push(velocity_y);
+        self.mass.push(mass);
+    }
+
+    pub fn len(&self) -> usize {
+        self.center_x.len()
+    }
+}
 // Constant wall damping coefficient:
 const WALL_DAMPING: f32 = 0.9;
 const VELOCITY_DAMPING: f32 = 1.00;
 const RESTITUTION: f32 = 0.5;
-const GRAVITY: Vec2<f32> = Vec2 { x: 0.0, y: -0.001 };
+const GRAVITY: f32 = -0.001;
 const COLLISION_DAMPING: f32 = 1.00;
 
-pub type GridKey = Vec2<i32>;
+pub type GridKey = (i32, i32);
 
 /// The grid now stores indices (into the Phx.particles Vec)
 pub struct HashGrid {
     cell_size: f32,
     cell_count: i32,
-    grid: HashMap<GridKey, Vec<usize>>,
+    grid: DashMap<GridKey, Vec<usize>>,
 }
 
 impl HashGrid {
@@ -41,27 +77,27 @@ impl HashGrid {
         Self {
             cell_size,
             cell_count: (2.0 / cell_size).ceil() as i32,
-            grid: HashMap::new(),
+            grid: DashMap::new(),
         }
     }
 
     pub fn get_grid_key(&self, x: f32, y: f32) -> GridKey {
-        Vec2 {
-            x: (x / 2.0 * self.cell_count as f32).floor() as i32,
-            y: (y / 2.0 * self.cell_count as f32).floor() as i32,
-        }
+        (
+            (x / 2.0 * self.cell_count as f32).floor() as i32,
+            (y / 2.0 * self.cell_count as f32).floor() as i32,
+        )
     }
 
     /// Inserts a particle index into the cell determined by p’s position.
-    pub fn insert(&mut self, index: usize, p: &Particle) {
-        let grid_key = self.get_grid_key(p.center.x, p.center.y);
+    pub fn insert(&mut self, index: usize, x: f32, y: f32) {
+        let grid_key = self.get_grid_key(x, y);
         self.grid.entry(grid_key).or_default().push(index);
     }
 
     /// Removes a given particle index from the grid cell corresponding to a given particle position.
-    pub fn remove(&mut self, index: usize, p: &Particle) {
-        let grid_key = self.get_grid_key(p.center.x, p.center.y);
-        if let Some(vec) = self.grid.get_mut(&grid_key) {
+    pub fn remove(&mut self, index: usize, x: f32, y: f32) {
+        let grid_key = self.get_grid_key(x, y);
+        if let Some(mut vec) = self.grid.get_mut(&grid_key) {
             if let Some(pos) = vec.iter().position(|&i| i == index) {
                 vec.swap_remove(pos);
             }
@@ -73,32 +109,13 @@ impl HashGrid {
         let mut neighbors = vec![];
         for i in -1..=1 {
             for j in -1..=1 {
-                let cell_key = key + Vec2 { x: i, y: j };
+                let cell_key = (key.0 + i, key.1 + j);
                 if let Some(indices) = self.grid.get(&cell_key) {
                     neighbors.extend(indices.iter().cloned());
                 }
             }
         }
         neighbors
-    }
-
-    /// Update grid membership for a single particle. If its grid key has changed,
-    /// remove it from its old cell and reinsert it into the new cell.
-    pub fn update_particle(&mut self, index: usize, old_pos: &Vec2<f32>, new_particle: &Particle) {
-        let old_key = self.get_grid_key(old_pos.x, old_pos.y);
-        let new_key = self.get_grid_key(new_particle.center.x, new_particle.center.y);
-        if old_key != new_key {
-            // Remove from old cell and insert into new one.
-            if let Some(cell) = self.grid.get_mut(&old_key) {
-                if let Some(pos) = cell.iter().position(|&i| i == index) {
-                    cell.swap_remove(pos);
-                    if cell.is_empty() {
-                        self.grid.remove(&old_key);
-                    }
-                }
-            }
-            self.grid.entry(new_key).or_default().push(index);
-        }
     }
 
     pub fn clear(&mut self) {
@@ -108,65 +125,130 @@ impl HashGrid {
 
 /// Central simulation structure: a particle store and a hash grid.
 pub struct Phx {
-    pub particles: Vec<Particle>,
+    pub particles: Particles,
     pub grid: HashGrid,
 }
 
 impl Phx {
     /// Create a new simulation with a given grid cell size.
-    pub fn new(cell_size: f32, particles: Vec<Particle>) -> Self {
-        let mut grid = HashGrid::new(cell_size);
+    pub fn new(cell_size: f32) -> Self {
+        let grid = HashGrid::new(cell_size);
+        let particles = Particles {
+            center_x: vec![],
+            center_y: vec![],
+            radius: vec![],
+            velocity_x: vec![],
+            velocity_y: vec![],
+            mass: vec![],
+        };
+
         // Insert all particle indices into the grid.
-        for (i, p) in particles.iter().enumerate() {
-            grid.insert(i, p);
-        }
         Self { particles, grid }
+    }
+
+    pub fn push(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        velocity_x: f32,
+        velocity_y: f32,
+        mass: f32,
+    ) {
+        self.particles
+            .push(center_x, center_y, radius, velocity_x, velocity_y, mass);
+        let new_index = self.particles.len() - 1;
+        self.grid.insert(new_index, center_x, center_y);
     }
 
     /// Update kinematics: update positions and grid membership.
     pub fn update_kinematics(&mut self) {
-        for (i, p) in self.particles.iter_mut().enumerate() {
-            let old_pos = p.center;
-            p.center += p.velocity;
-            // Update the grid cell if needed.
-            self.grid.update_particle(i, &old_pos, p);
-        }
+        // Clone old positions for grid membership check
+        let old_x = self.particles.center_x.clone();
+        let old_y = self.particles.center_y.clone();
+
+        // Update positions in parallel
+        self.particles
+            .center_x
+            .par_iter_mut()
+            .zip(self.particles.velocity_x.par_iter())
+            .for_each(|(p, v)| *p += v);
+
+        self.particles
+            .center_y
+            .par_iter_mut()
+            .zip(self.particles.velocity_y.par_iter())
+            .for_each(|(p, v)| *p += v);
+
+        self.update_grid_membership(old_x, old_y);
+    }
+
+    fn update_grid_membership(&self, old_x: Vec<f32>, old_y: Vec<f32>) {
+        let updates: Vec<(usize, GridKey, GridKey)> = self
+            .particles
+            .center_x
+            .par_iter()
+            .zip(self.particles.center_y.par_iter())
+            .enumerate()
+            .map(|(i, (&x, &y))| {
+                let old_key = self.grid.get_grid_key(old_x[i], old_y[i]);
+                let new_key = self.grid.get_grid_key(x, y);
+                (i, old_key, new_key)
+            })
+            .filter(|(_, old_key, new_key)| old_key != new_key)
+            .collect();
+
+        updates.par_iter().for_each(|&(i, old_key, new_key)| {
+            if let Some(mut cell) = self.grid.grid.get_mut(&old_key) {
+                cell.retain(|&idx| idx != i);
+                if cell.is_empty() {
+                    drop(cell);
+                    self.grid.grid.remove(&old_key);
+                }
+            }
+            self.grid.grid.entry(new_key).or_default().push(i);
+        })
     }
 
     /// Resolve collisions with walls.
     pub fn resolve_wall_collisions(&mut self) {
-        // We determine affected particles by checking the particle position.
-        for (i, p) in self.particles.iter_mut().enumerate() {
-            let old_pos = p.center;
-            if p.center.x - p.radius < -1.0 {
-                p.center.x = -1.0 + p.radius;
-                p.velocity.x = WALL_DAMPING * p.velocity.x.abs();
+        let old_x = self.particles.center_x.clone();
+        let old_y = self.particles.center_y.clone();
+
+        for i in 0..self.particles.center_x.len() {
+            let r = self.particles.radius[i];
+            if self.particles.center_x[i] - r < -1.0 {
+                self.particles.center_x[i] = -1.0 + r;
+                self.particles.velocity_x[i] = WALL_DAMPING * self.particles.velocity_x[i].abs();
             }
-            if p.center.x + p.radius > 1.0 {
-                p.center.x = 1.0 - p.radius;
-                p.velocity.x = -WALL_DAMPING * p.velocity.x.abs();
+            if self.particles.center_x[i] + r > 1.0 {
+                self.particles.center_x[i] = 1.0 - r;
+                self.particles.velocity_x[i] = -WALL_DAMPING * self.particles.velocity_x[i].abs();
             }
-            if p.center.y - p.radius < -1.0 {
-                p.center.y = -1.0 + p.radius;
-                p.velocity.y = WALL_DAMPING * p.velocity.y.abs();
+            if self.particles.center_y[i] - r < -1.0 {
+                self.particles.center_y[i] = -1.0 + r;
+                self.particles.velocity_y[i] = WALL_DAMPING * self.particles.velocity_y[i].abs();
             }
-            if p.center.y + p.radius > 1.0 {
-                p.center.y = 1.0 - p.radius;
-                p.velocity.y = -WALL_DAMPING * p.velocity.y.abs();
+            if self.particles.center_y[i] + r > 1.0 {
+                self.particles.center_y[i] = 1.0 - r;
+                self.particles.velocity_y[i] = -WALL_DAMPING * self.particles.velocity_y[i].abs();
             }
-            // Update grid membership if needed.
-            self.grid.update_particle(i, &old_pos, p);
         }
+
+        self.update_grid_membership(old_x, old_y);
     }
 
     /// Resolve collisions between particles.
     pub fn resolve_collisions(&mut self) {
         // Get grid keys to iterate over.
-        let keys: Vec<GridKey> = self.grid.grid.keys().cloned().collect();
+        let keys: Vec<GridKey> = self.grid.grid.iter().map(|entry| *entry.key()).collect();
+
+        let mut collision_pairs = Vec::new();
         for cell_key in keys {
             let neighbor_indices = self.grid.get_possible_neighbors(cell_key);
             // For each particle in the current cell, check collisions with all neighbors.
-            if let Some(cell_indices) = self.grid.grid.get(&cell_key).cloned() {
+            if let Some(cell_indices_ref) = self.grid.grid.get(&cell_key) {
+                let cell_indices: Vec<usize> = cell_indices_ref.value().clone();
                 for &i in &cell_indices {
                     // For each neighbor index (avoid self‑collision)
                     for &j in &neighbor_indices {
@@ -174,46 +256,59 @@ impl Phx {
                             continue;
                         }
                         // Resolve collision between particles[i] and particles[j]
-                        // (Note: this simple scheme may resolve collisions twice.)
-                        let (overlap, _) = self.particles[i].overlap(&self.particles[j]);
+                        let (overlap, _) = self.particles.overlap(i, j);
                         if overlap {
-                            self.resolve_collision_between(i, j);
+                            collision_pairs.push((i, j));
                         }
                     }
                 }
             }
         }
+
+        for (i, j) in collision_pairs {
+            self.resolve_collision_between(i, j);
+        }
     }
 
     fn resolve_collision_between(&mut self, i: usize, j: usize) {
-        // println!("Resolving collision between particles {} and {}", i, j);
-        let distance = (self.particles[i].center - self.particles[j].center)
-            .magnitude_sq()
-            .sqrt();
-        let normal = if distance != 0.0 {
-            (self.particles[i].center - self.particles[j].center) * (1.0 / distance)
-        } else {
-            Vec2 { x: 1.0, y: 0.0 }
-        };
+        let dx = self.particles.center_x[i] - self.particles.center_x[j];
+        let dy = self.particles.center_y[i] - self.particles.center_y[j];
+        let distance_sq = dx * dx + dy * dy;
+        let distance = distance_sq.sqrt();
+
+        let normal_x = if distance != 0.0 { dx / distance } else { 1.0 };
+        let normal_y = if distance != 0.0 { dy / distance } else { 0.0 };
+
         // Relative velocity along the normal.
-        let relative_velocity = self.particles[i].velocity - self.particles[j].velocity;
-        let velocity_along_normal = relative_velocity.dot(normal);
+        let relative_vx = self.particles.velocity_x[i] - self.particles.velocity_x[j];
+        let relative_vy = self.particles.velocity_y[i] - self.particles.velocity_y[j];
+        let velocity_along_normal = relative_vx * normal_x + relative_vy * normal_y;
         if velocity_along_normal > 0.0 {
             return;
         }
-        let a_inv = 1.0 / self.particles[i].mass;
-        let b_inv = 1.0 / self.particles[j].mass;
+
+        let a_inv = 1.0 / self.particles.mass[i];
+        let b_inv = 1.0 / self.particles.mass[j];
         let impulse_mag = -(1.0 + RESTITUTION) * velocity_along_normal / (a_inv + b_inv);
-        let impulse = normal * impulse_mag * COLLISION_DAMPING;
-        self.particles[i].velocity += impulse * a_inv;
-        self.particles[j].velocity -= impulse * b_inv;
+        let imp_x = normal_x * impulse_mag * COLLISION_DAMPING;
+        let imp_y = normal_y * impulse_mag * COLLISION_DAMPING;
+
+        self.particles.velocity_x[i] += imp_x * a_inv;
+        self.particles.velocity_y[i] += imp_y * a_inv;
+        self.particles.velocity_x[j] -= imp_x * b_inv;
+        self.particles.velocity_y[j] -= imp_y * b_inv;
     }
 
     /// Apply velocity damping to all particles.
     pub fn apply_velocity_damping(&mut self) {
-        for p in self.particles.iter_mut() {
-            p.velocity = p.velocity * VELOCITY_DAMPING;
-        }
+        self.particles
+            .velocity_x
+            .par_iter_mut()
+            .for_each(|v| *v *= VELOCITY_DAMPING);
+        self.particles
+            .velocity_y
+            .par_iter_mut()
+            .for_each(|v| *v *= VELOCITY_DAMPING);
     }
 
     fn resolve_overlap_between(&mut self, i: usize, j: usize) -> bool {
@@ -221,30 +316,74 @@ impl Phx {
         if i == j {
             return false;
         }
-        let (overlap, distance_sq) = self.particles[i].overlap(&self.particles[j]);
-        if !overlap {
+
+        // Compute the squared distance between particle centers.
+        let dx = self.particles.center_x[i] - self.particles.center_x[j];
+        let dy = self.particles.center_y[i] - self.particles.center_y[j];
+        let distance_sq = dx * dx + dy * dy;
+        let radius_sum = self.particles.radius[i] + self.particles.radius[j];
+
+        // If there’s no overlap, exit early.
+        if distance_sq >= radius_sum * radius_sum {
             return false;
         }
-        let distance = distance_sq.sqrt();
-        let normal = if distance != 0.0 {
-            (self.particles[i].center - self.particles[j].center) * (1.0 / distance)
-        } else {
-            Vec2 { x: 1.0, y: 0.0 }
-        };
-        let overlap_distance = self.particles[i].radius + self.particles[j].radius - distance;
-        let correction = normal * (overlap_distance * 0.5);
 
-        // Store old positions for grid membership update.
-        let old_pos_i = self.particles[i].center;
-        let old_pos_j = self.particles[j].center;
+        let distance = distance_sq.sqrt();
+        let (normal_x, normal_y) = if distance != 0.0 {
+            (dx / distance, dy / distance)
+        } else {
+            (1.0, 0.0)
+        };
+
+        // Determine how much to correct each particle.
+        let overlap_distance = radius_sum - distance;
+        let correction_x = normal_x * (overlap_distance * 0.5);
+        let correction_y = normal_y * (overlap_distance * 0.5);
+
+        // Save old positions for grid update.
+        let old_x_i = self.particles.center_x[i];
+        let old_y_i = self.particles.center_y[i];
+        let old_x_j = self.particles.center_x[j];
+        let old_y_j = self.particles.center_y[j];
 
         // Adjust positions.
-        self.particles[i].center += correction;
-        self.particles[j].center -= correction;
+        self.particles.center_x[i] += correction_x;
+        self.particles.center_y[i] += correction_y;
+        self.particles.center_x[j] -= correction_x;
+        self.particles.center_y[j] -= correction_y;
 
-        // Update grid membership if needed.
-        self.grid.update_particle(i, &old_pos_i, &self.particles[i]);
-        self.grid.update_particle(j, &old_pos_j, &self.particles[j]);
+        // Update grid membership for particle i.
+        let old_key_i = self.grid.get_grid_key(old_x_i, old_y_i);
+        let new_key_i = self
+            .grid
+            .get_grid_key(self.particles.center_x[i], self.particles.center_y[i]);
+        if old_key_i != new_key_i {
+            if let Some(mut cell) = self.grid.grid.get_mut(&old_key_i) {
+                cell.retain(|&idx| idx != i);
+                if cell.is_empty() {
+                    drop(cell);
+                    self.grid.grid.remove(&old_key_i);
+                }
+            }
+            self.grid.grid.entry(new_key_i).or_default().push(i);
+        }
+
+        // Update grid membership for particle j.
+        let old_key_j = self.grid.get_grid_key(old_x_j, old_y_j);
+        let new_key_j = self
+            .grid
+            .get_grid_key(self.particles.center_x[j], self.particles.center_y[j]);
+        if old_key_j != new_key_j {
+            if let Some(mut cell) = self.grid.grid.get_mut(&old_key_j) {
+                cell.retain(|&idx| idx != j);
+                if cell.is_empty() {
+                    drop(cell);
+                    self.grid.grid.remove(&old_key_j);
+                }
+            }
+            self.grid.grid.entry(new_key_j).or_default().push(j);
+        }
+
         true
     }
 
@@ -252,19 +391,26 @@ impl Phx {
     pub fn resolve_overlaps(&mut self, max_iterations: usize) {
         for _ in 0..max_iterations {
             let mut collision_found = false;
-            // Clone grid keys to avoid borrow issues.
-            let cell_keys: Vec<GridKey> = self.grid.grid.keys().cloned().collect();
-            for key in cell_keys {
-                // Clone indices from this cell.
-                let cell_indices = self.grid.grid.get(&key).cloned().unwrap_or_default();
-                for &i in &cell_indices {
-                    let key_i = self
-                        .grid
-                        .get_grid_key(self.particles[i].center.x, self.particles[i].center.y);
-                    // Get all potential neighbors.
-                    let neighbors = self.grid.get_possible_neighbors(key_i);
-                    // For each neighbor index, try to resolve a collision.
-                    for j in neighbors {
+            let num_particles = self.particles.len();
+
+            // Create a HashMap to store neighbors for each cell.
+            let mut cell_neighbors: HashMap<GridKey, Vec<usize>> = HashMap::new();
+            for key in self.grid.grid.iter().map(|entry| *entry.key()) {
+                cell_neighbors.insert(key, self.grid.get_possible_neighbors(key));
+            }
+
+            // Iterate over all particles.
+            for i in 0..num_particles {
+                let key_i = self
+                    .grid
+                    .get_grid_key(self.particles.center_x[i], self.particles.center_y[i]);
+                // Get precomputed neighbors for this particle's cell.
+                if let Some(neighbors) = cell_neighbors.get(&key_i) {
+                    // Check each neighbor (only once per pair).
+                    for &j in neighbors {
+                        if i <= j {
+                            continue;
+                        }
                         if self.resolve_overlap_between(i, j) {
                             collision_found = true;
                         }
@@ -279,9 +425,10 @@ impl Phx {
 
     /// Apply gravity to all particles.
     pub fn apply_gravity(&mut self) {
-        for p in self.particles.iter_mut() {
-            p.velocity += GRAVITY;
-        }
+        self.particles
+            .velocity_y
+            .par_iter_mut()
+            .for_each(|v| *v += GRAVITY);
     }
 
     /// Update the simulation state.
@@ -296,118 +443,11 @@ impl Phx {
 
     pub fn get_drawable_particles(&self) -> Vec<(f32, f32, f32)> {
         self.particles
+            .center_x
             .iter()
-            .map(|p| (p.center.x, p.center.y, p.radius))
+            .zip(self.particles.center_y.iter())
+            .zip(self.particles.radius.iter())
+            .map(|((&x, &y), &r)| (x, y, r))
             .collect()
-    }
-}
-
-// ===== Vec2 Implementation =====
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Vec2<T: Add<Output = T> + Copy> {
-    pub x: T,
-    pub y: T,
-}
-
-impl<T: Add<Output = T> + Copy> Add for Vec2<T> {
-    type Output = Vec2<T>;
-
-    fn add(self, other: Vec2<T>) -> Vec2<T> {
-        Vec2 {
-            x: self.x + other.x,
-            y: self.y + other.y,
-        }
-    }
-}
-
-impl<T: Sub<Output = T> + Add<Output = T> + Copy> Sub for Vec2<T> {
-    type Output = Vec2<T>;
-
-    fn sub(self, other: Vec2<T>) -> Vec2<T> {
-        Vec2 {
-            x: self.x - other.x,
-            y: self.y - other.y,
-        }
-    }
-}
-
-impl<T: Add<Output = T> + Sub<Output = T> + Copy> SubAssign for Vec2<T> {
-    fn sub_assign(&mut self, other: Self) {
-        *self = *self - other;
-    }
-}
-impl<T: Add<Output = T> + Copy> AddAssign for Vec2<T> {
-    fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
-    }
-}
-
-impl<T: Mul<Output = T> + Copy + Add<Output = T>> Vec2<T> {
-    fn magnitude_sq(&self) -> T {
-        self.x * self.x + self.y * self.y
-    }
-
-    fn dot(&self, other: Vec2<T>) -> T {
-        self.x * other.x + self.y * other.y
-    }
-}
-
-impl<T> Mul<T> for Vec2<T>
-where
-    T: Add<Output = T> + Mul<Output = T> + Copy,
-{
-    type Output = Self;
-
-    fn mul(self, scalar: T) -> Self::Output {
-        Self {
-            x: self.x * scalar,
-            y: self.y * scalar,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hashgrid_new() {
-        let grid = HashGrid::new(10.0);
-        assert_eq!(grid.cell_size, 10.0);
-        assert!(grid.grid.is_empty());
-    }
-
-    #[test]
-    fn test_hashgrid_get_grid_key() {
-        let grid = HashGrid::new(0.1);
-        let key = grid.get_grid_key(0.1, 0.2);
-        assert_eq!(key, Vec2 { x: 1, y: 2 });
-    }
-
-    #[test]
-    fn test_phx_integration() {
-        // Create two particles.
-        let particle1 = Particle {
-            center: Vec2 { x: 15.0, y: 25.0 },
-            radius: 1.0,
-            velocity: Vec2 { x: 1.0, y: 1.0 },
-            mass: 1.0,
-        };
-        let particle2 = Particle {
-            center: Vec2 { x: 25.0, y: 35.0 },
-            radius: 1.0,
-            velocity: Vec2 { x: 1.0, y: 1.0 },
-            mass: 1.0,
-        };
-
-        let particles = vec![particle1.clone(), particle2.clone()];
-        let phx = Phx::new(10.0, particles);
-
-        // Check that grid contains both particle indices.
-        let key = phx.grid.get_grid_key(15.0, 25.0);
-        let neighbors = phx.grid.get_possible_neighbors(key);
-        assert!(neighbors.contains(&0));
-        // (Depending on positions, particle2 might be in a different cell.)
     }
 }
