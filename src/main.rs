@@ -35,8 +35,7 @@ fn main() {
                         simulation.particles.clear();
                         simulation.grid.clear();
                     }
-                }
-                _ => {}
+                } _ => {}
             },
             Event::RedrawRequested(_) => {
                 if mouse_down {
@@ -60,11 +59,14 @@ fn main() {
                         );
                     }
                 }
+                let start = std::time::Instant::now();
                 simulation.update();
                 let particles_draw: Vec<(f32, f32, f32)> = simulation.get_drawable_particles();
                 gfx.clear_frame();
                 gfx.draw_particles(&particles_draw);
                 gfx.render();
+                println!("{:?}", start.elapsed());
+
                 //sleep for 500ms
                 // std::thread::sleep(std::time::Duration::from_millis(500));
             }

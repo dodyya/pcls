@@ -1,5 +1,7 @@
 use dashmap::DashMap;
 use rayon::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     io::stdin,
@@ -128,6 +130,10 @@ pub struct Phx {
     pub particles: Particles,
     pub grid: HashGrid,
 }
+
+// Add these before impl Phx:
+unsafe impl Sync for Phx {}
+unsafe impl Send for Phx {}
 
 impl Phx {
     /// Create a new simulation with a given grid cell size.
@@ -387,38 +393,52 @@ impl Phx {
         true
     }
 
-    /// Iteratively resolve overlaps until no collisions are detected or until max_iterations is reached.
+    /// Resolve overlaps using a 9-group parallel strategy.
     pub fn resolve_overlaps(&mut self, max_iterations: usize) {
+        let self_mutex = std::sync::Arc::new(Mutex::new(self));
         for _ in 0..max_iterations {
-            let mut collision_found = false;
-            let num_particles = self.particles.len();
+            let collision_found = std::sync::Arc::new(AtomicBool::new(false));
 
-            // Create a HashMap to store neighbors for each cell.
-            let mut cell_neighbors: HashMap<GridKey, Vec<usize>> = HashMap::new();
-            for key in self.grid.grid.iter().map(|entry| *entry.key()) {
-                cell_neighbors.insert(key, self.grid.get_possible_neighbors(key));
-            }
+            for group_x in 0..3 {
+                for group_y in 0..3 {
+                    // Collect grid cell keys and their particles for the current group
+                    let group_work: Vec<(GridKey, Vec<usize>)> = self_mutex
+                        .lock()
+                        .unwrap()
+                        .grid
+                        .grid
+                        .iter()
+                        .filter(|entry| {
+                            let key = *entry.key();
+                            key.0.rem_euclid(3) == group_x && key.1.rem_euclid(3) == group_y
+                        })
+                        .map(|entry| (*entry.key(), entry.value().clone()))
+                        .collect();
 
-            // Iterate over all particles.
-            for i in 0..num_particles {
-                let key_i = self
-                    .grid
-                    .get_grid_key(self.particles.center_x[i], self.particles.center_y[i]);
-                // Get precomputed neighbors for this particle's cell.
-                if let Some(neighbors) = cell_neighbors.get(&key_i) {
-                    // Check each neighbor (only once per pair).
-                    for &j in neighbors {
-                        if i <= j {
-                            continue;
-                        }
-                        if self.resolve_overlap_between(i, j) {
-                            collision_found = true;
-                        }
-                    }
+                    let self_mutex = std::sync::Arc::clone(&self_mutex);
+                    let collision_found = std::sync::Arc::clone(&collision_found);
+                    group_work
+                        .par_iter()
+                        .for_each(move |(cell_key, particles_in_cell)| {
+                            let mut phx = self_mutex.lock().unwrap();
+                            let possible_neighbors = phx.grid.get_possible_neighbors(*cell_key);
+                            for &i in particles_in_cell {
+                                for &j in &possible_neighbors {
+                                    if i <= j {
+                                        continue;
+                                    }
+                                    if phx.resolve_overlap_between(i, j) {
+                                        collision_found.store(true, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        });
                 }
             }
-            if !collision_found {
-                break;
+            if !Arc::clone(&collision_found).load(Ordering::Relaxed) {
+                if !collision_found.load(Ordering::Relaxed) {
+                    break;
+                }
             }
         }
     }

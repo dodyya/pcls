@@ -19,7 +19,7 @@ impl Gfx {
     pub fn new(width: u32, height: u32) -> (Self, EventLoop<()>) {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
-            .with_title("graphics")
+            .with_title("graphics v2")
             .with_inner_size(PhysicalSize::new(width, height))
             .with_resizable(false)
             .build(&event_loop)
