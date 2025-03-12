@@ -7,7 +7,7 @@ use winit::{
 mod gfx;
 mod phx;
 use gfx::Gfx;
-use phx::{Particle, Phx, Vec2};
+use phx::Phx;
 use rand::Rng;
 
 const PARTICLE_SIZE: f32 = 0.01;
@@ -66,20 +66,27 @@ fn main() {
                         let sim_x = (cursor_x / window_size) * 2.0 - 1.0;
                         let sim_y = 1.0 - (cursor_y / window_size) * 2.0;
 
-                        let new_particle = Particle {
-                            center: Vec2 { x: sim_x, y: sim_y },
-                            radius: PARTICLE_SIZE,
-                            // Random velocity
-                            velocity: Vec2 {
-                                x: rng.gen_range(-0.01..0.01),
-                                y: rng.gen_range(-0.01..0.01),
-                            },
-                            mass: 1.0,
-                        };
+                        // Create particle data tuple instead of struct
+                        let particle_data = (
+                            sim_x,                      // center_x
+                            sim_y,                      // center_y
+                            PARTICLE_SIZE,              // radius
+                            rng.gen_range(-0.01..0.01), // velocity_x
+                            rng.gen_range(-0.01..0.01), // velocity_y
+                            1.0,                        // mass
+                        );
 
-                        simulation.particles.push(new_particle.clone());
-                        let new_index = simulation.particles.len() - 1;
-                        simulation.grid.insert(new_index, &new_particle);
+                        let new_index = simulation.particles.count;
+                        simulation.particles.center_x.push(particle_data.0);
+                        simulation.particles.center_y.push(particle_data.1);
+                        simulation.particles.radius.push(particle_data.2);
+                        simulation.particles.velocity_x.push(particle_data.3);
+                        simulation.particles.velocity_y.push(particle_data.4);
+                        simulation.particles.mass.push(particle_data.5);
+                        simulation.particles.count += 1;
+                        simulation
+                            .grid
+                            .insert(new_index, particle_data.0, particle_data.1);
                     }
                 }
                 //Begin timing
