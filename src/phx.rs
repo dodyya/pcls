@@ -63,8 +63,8 @@ impl Particles {
 const WALL_DAMPING: f32 = 0.9;
 const VELOCITY_DAMPING: f32 = 1.00;
 const RESTITUTION: f32 = 0.5;
-const GRAVITY_X: f32 = 0.0;
-const GRAVITY_Y: f32 = -0.001;
+const GRAVITY_X: f32 = 0.01;
+const GRAVITY_Y: f32 = 0.01;
 const COLLISION_DAMPING: f32 = 1.00;
 
 pub type GridKey = (i32, i32);
@@ -104,6 +104,9 @@ impl HashGrid {
         if let Some(vec) = self.grid.get_mut(&grid_key) {
             if let Some(pos) = vec.iter().position(|&i| i == index) {
                 vec.swap_remove(pos);
+                if vec.is_empty() {
+                   self.grid.remove(&grid_key);
+                }
             }
         }
     }
@@ -384,14 +387,16 @@ impl Phx {
         }
     }
 
+    
     /// Apply gravity to all particles.
     pub fn apply_gravity(&mut self) {
         for i in 0..self.particles.count {
-            self.particles.velocity_x[i] += GRAVITY_X;
-            self.particles.velocity_y[i] += GRAVITY_Y;
+            //Gravity towards center of screen depending on whether position is positive
+            self.particles.velocity_x[i] -= GRAVITY_X * self.particles.center_x[i];
+            self.particles.velocity_y[i] -= GRAVITY_Y * self.particles.center_y[i];
         }
-    }
 
+    }
     /// Update the simulation state.
     pub fn update(&mut self) {
         self.update_kinematics();
