@@ -204,29 +204,38 @@ fn _cpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
 }
 
 fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
-    if x1 > x2 {
+    // Early return if coordinates are invalid
+    if x1 > x2
+        || y < 0
+        || x1 < 0
+        || x2 >= width as i32
+        || y >= (frame.len() / 4 / width as usize) as i32
+    {
         return;
     }
 
-    let start_index = (y.wrapping_mul(width as i32).wrapping_add(x1) as usize).wrapping_mul(4);
-    let end_index = start_index
-        .wrapping_add((x2.wrapping_sub(x1) as usize).wrapping_mul(4))
-        .saturating_add(4);
+    // Clamp x1 and x2 to valid range
+    let x1 = x1.max(0);
+    let x2 = x2.min(width as i32 - 1);
+
+    // Compute indices safely
+    let start_index = (y as usize * width as usize + x1 as usize) * 4;
+    let end_index = (y as usize * width as usize + x2 as usize) * 4 + 4;
     let len = frame.len();
 
-    if end_index > frame.len() {
-        // println!("Tried to fill {:?}", (x1, x2, y));
-        if start_index >= len {
-            return;
-        }
+    if start_index >= len {
+        return;
+    }
+
+    if end_index > len {
         let pixels = &mut frame[start_index..len];
-        let white = vec![255; len.saturating_sub(start_index)];
+        let white = vec![255; len - start_index];
         pixels.copy_from_slice(&white);
         return;
     }
 
     let pixels = &mut frame[start_index..end_index];
-    let white = vec![255; end_index.saturating_sub(start_index)];
+    let white = vec![255; end_index - start_index];
     pixels.copy_from_slice(&white);
 }
 fn _rst(frame: &mut [u8]) {
