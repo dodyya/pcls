@@ -6,8 +6,6 @@ pub struct Phx {
     pub grid: HashGrid,
 }
 
-const WALL_DAMPING: f32 = 0.9;
-
 impl Phx {
     pub fn new(cell_size: f32, p_data: Vec<(f32, f32, f32, f32, f32, f32)>) -> Self {
         let pcls = Particles::from_particles(p_data);
@@ -17,47 +15,6 @@ impl Phx {
         }
         Self { pcls, grid }
     }
-
-    // pub fn update_kinematics(&mut self) {
-    //     for i in 0..self.pcls.count {
-    //         let old_x = self.pcls.x[i];
-    //         let old_y = self.pcls.y[i];
-
-    //         self.pcls.x[i] += self.pcls.vx[i];
-    //         self.pcls.y[i] += self.pcls.vy[i];
-
-    //         self.grid
-    //             .update_particle(i, old_x, old_y, self.pcls.x[i], self.pcls.y[i]);
-    //     }
-    // }
-
-    // pub fn resolve_wall_collisions(&mut self) {
-    //     for i in 0..self.pcls.count {
-    //         let old_x = self.pcls.x[i];
-    //         let old_y = self.pcls.y[i];
-    //         let radius = self.pcls.radius[i];
-
-    //         if self.pcls.x[i] - radius < -1.0 {
-    //             self.pcls.x[i] = -1.0 + radius;
-    //             self.pcls.vx[i] = WALL_DAMPING * self.pcls.vx[i].abs();
-    //         }
-    //         if self.pcls.x[i] + radius > 1.0 {
-    //             self.pcls.x[i] = 1.0 - radius;
-    //             self.pcls.vx[i] = -WALL_DAMPING * self.pcls.vx[i].abs();
-    //         }
-    //         if self.pcls.y[i] - radius < -1.0 {
-    //             self.pcls.y[i] = -1.0 + radius;
-    //             self.pcls.vy[i] = WALL_DAMPING * self.pcls.vy[i].abs();
-    //         }
-    //         if self.pcls.y[i] + radius > 1.0 {
-    //             self.pcls.y[i] = 1.0 - radius;
-    //             self.pcls.vy[i] = -WALL_DAMPING * self.pcls.vy[i].abs();
-    //         }
-
-    //         self.grid
-    //             .update_particle(i, old_x, old_y, self.pcls.x[i], self.pcls.y[i]);
-    //     }
-    // }
 
     pub fn resolve_collisions(&mut self) {
         let keys: Vec<GridKey> = self.grid.map.keys().cloned().collect();
@@ -103,7 +60,6 @@ impl Phx {
         true
     }
 
-    /// Iteratively resolve overlaps until no collisions are detected or until max_iterations is reached.
     pub fn resolve_overlaps(&mut self, max_iterations: usize) {
         for _ in 0..max_iterations {
             let mut collision_found = false;
@@ -142,20 +98,17 @@ impl Phx {
 
     /// Update the simulation state.
     pub fn step(&mut self) {
-        self.pcls.update_kinematics();
+        self.pcls.integrate_v();
         self.pcls.resolve_wall_collisions();
+        self.grid.update(&self.pcls);
         self.resolve_collisions();
         self.pcls.apply_velocity_damping();
         self.pcls.apply_gravity();
-        self.resolve_overlaps(3);
+        self.resolve_overlaps(30);
     }
 
-    pub fn get_drawable_particles(&self) -> Vec<(f32, f32, f32)> {
-        let mut result = Vec::with_capacity(self.pcls.count);
-        for i in 0..self.pcls.count {
-            result.push((self.pcls.x[i], self.pcls.y[i], self.pcls.radius[i]));
-        }
-        result
+    pub fn get_drawable_particles(&self) -> (&[f32], &[f32], &[f32]) {
+        (&self.pcls.x, &self.pcls.y, &self.pcls.radius)
     }
 
     pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, vx: f32, vy: f32, mass: f32) {

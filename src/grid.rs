@@ -26,15 +26,15 @@ impl HashGrid {
         )
     }
 
-    pub fn insert(&mut self, index: usize, x: f32, y: f32) {
+    pub fn insert(&mut self, id: usize, x: f32, y: f32) {
         let grid_key = self.get_grid_key(x, y);
-        self.map.entry(grid_key).or_default().push(index);
+        self.map.entry(grid_key).or_default().push(id);
     }
 
-    pub fn remove(&mut self, index: usize, x: f32, y: f32) {
+    pub fn remove(&mut self, id: usize, x: f32, y: f32) {
         let grid_key = self.get_grid_key(x, y);
         if let Some(vec) = self.map.get_mut(&grid_key) {
-            if let Some(pos) = vec.iter().position(|&i| i == index) {
+            if let Some(pos) = vec.iter().position(|&i| i == id) {
                 vec.swap_remove(pos);
                 if vec.is_empty() {
                     self.map.remove(&grid_key);
@@ -85,7 +85,6 @@ impl HashGrid {
         }
     }
 
-    //Just reinitialize
     pub fn update(&mut self, particles: &Particles) {
         self.map.clear();
         for i in 0..particles.count {

@@ -14,6 +14,7 @@ const COLLISION_DAMPING: f32 = 1.00;
 const GRAVITY: f32 = 0.01;
 const WALL_DAMPING: f32 = 0.9;
 const GRAVITY_TOWARDS_CENTER: bool = false;
+const SLOP: f32 = 0.0;
 
 pub type ParticleID = usize;
 
@@ -74,10 +75,16 @@ impl Particles {
         self.count += 1;
     }
 
-    pub fn collision(&mut self, i: usize, j: usize) {
+    pub fn collision(&mut self, i: usize, j: usize) -> bool {
+        if i == j {
+            return false;
+        }
         let delta_x = self.x[i] - self.x[j];
         let delta_y = self.y[i] - self.y[j];
         let distance_sq = delta_x * delta_x + delta_y * delta_y;
+        if distance_sq >= self.radius[i] * self.radius[i] + self.radius[j] * self.radius[j] + SLOP {
+            return false;
+        }
         let distance = distance_sq.sqrt();
 
         let (normal_x, normal_y) = if distance != 0.0 {
@@ -91,7 +98,7 @@ impl Particles {
         let velocity_along_normal = relative_velocity_x * normal_x + relative_velocity_y * normal_y;
 
         if velocity_along_normal > 0.0 {
-            return;
+            return false;
         }
 
         let a_inv = 1.0 / self.mass[i];
@@ -104,15 +111,16 @@ impl Particles {
         self.vy[i] += impulse_y * a_inv;
         self.vx[j] -= impulse_x * b_inv;
         self.vy[j] -= impulse_y * b_inv;
+        true
     }
-    /// Apply velocity damping to all particles.
+
     pub fn apply_velocity_damping(&mut self) {
         for i in 0..self.count {
             self.vx[i] *= VELOCITY_DAMPING;
             self.vy[i] *= VELOCITY_DAMPING;
         }
     }
-    /// Apply gravity to all particles.
+
     pub fn apply_gravity(&mut self) {
         for i in 0..self.count {
             if GRAVITY_TOWARDS_CENTER {
@@ -128,15 +136,13 @@ impl Particles {
         if i == j {
             return false;
         }
-
-        let (overlap, distance_sq) = self.overlap_info(i, j);
-        if !overlap {
-            return false;
-        }
-
-        let distance = distance_sq.sqrt();
         let delta_x = self.x[i] - self.x[j];
         let delta_y = self.y[i] - self.y[j];
+        let distance_sq = delta_x * delta_x + delta_y * delta_y;
+        if distance_sq >= self.radius[i] * self.radius[i] + self.radius[j] * self.radius[j] + SLOP {
+            return false;
+        }
+        let distance = distance_sq.sqrt();
 
         let (normal_x, normal_y) = if distance != 0.0 {
             (delta_x / distance, delta_y / distance)
@@ -148,11 +154,6 @@ impl Particles {
         let correction_x = normal_x * (overlap_distance * 0.5);
         let correction_y = normal_y * (overlap_distance * 0.5);
 
-        let old_pos_i_x = self.x[i];
-        let old_pos_i_y = self.y[i];
-        let old_pos_j_x = self.x[j];
-        let old_pos_j_y = self.y[j];
-
         self.x[i] += correction_x;
         self.y[i] += correction_y;
         self.x[j] -= correction_x;
@@ -160,7 +161,7 @@ impl Particles {
         true
     }
 
-    pub fn update_kinematics(&mut self) {
+    pub fn integrate_v(&mut self) {
         for i in 0..self.count {
             self.x[i] += self.vx[i];
             self.y[i] += self.vy[i];
@@ -192,4 +193,6 @@ impl Particles {
             }
         }
     }
+
+    // pub fn resolve_
 }

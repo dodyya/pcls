@@ -10,8 +10,9 @@ mod particles;
 mod sweep;
 mod sweepphx;
 use gfx::Gfx;
+use gridphx::Phx;
+// use sweepphx::Phx;
 use rand::Rng;
-use sweepphx::Phx;
 const PARTICLE_SIZE: f32 = 0.01;
 const WINDOW_SIZE: u32 = 700;
 
@@ -65,19 +66,27 @@ fn main() {
                             let sim_x = (cursor_x / WINDOW_SIZE as f32) * 2.0 - 1.0;
                             let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as f32) * 2.0;
 
-                            let vel_x = rng.gen_range(-0.01..0.01);
-                            let vel_y = rng.gen_range(-0.01..0.01);
+                            for _ in 0..10 {
+                                let vel_x = rng.gen_range(-0.01..0.01);
+                                let vel_y = rng.gen_range(-0.01..0.01);
 
-                            simulation.add_particle(sim_x, sim_y, PARTICLE_SIZE, vel_x, vel_y, 1.0);
+                                simulation.add_particle(
+                                    sim_x,
+                                    sim_y,
+                                    PARTICLE_SIZE,
+                                    vel_x,
+                                    vel_y,
+                                    1.0,
+                                );
+                            }
                         }
                     }
                 }
 
                 simulation.step();
 
-                let particles = simulation.get_drawable_particles();
                 gfx.clear_frame();
-                gfx.draw_particles(&particles);
+                gfx.draw_particles(simulation.get_drawable_particles());
                 gfx.render();
                 gfx.request_redraw();
             }

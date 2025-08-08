@@ -43,10 +43,15 @@ impl Gfx {
         )
     }
 
-    pub fn draw_particles(&mut self, particles: &[(f32, f32, f32)]) {
-        for (x, y, r) in particles {
-            fill_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
-        }
+    pub fn draw_particles(&mut self, particles: (&[f32], &[f32], &[f32])) {
+        particles
+            .0
+            .iter()
+            .zip(particles.1.iter())
+            .zip(particles.2.iter())
+            .for_each(|((x, y), r)| {
+                fill_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
+            });
     }
 
     pub fn clear_frame(&mut self) {
@@ -200,8 +205,8 @@ fn _cpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
 fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
     if x1 > x2
         || y < 0
-        || x1 < 0
-        || x2 >= width as i32
+        || x2 < 0
+        || x1 >= width as i32
         || y >= (frame.len() / 4 / width as usize) as i32
     {
         return;
