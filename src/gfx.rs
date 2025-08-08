@@ -15,7 +15,6 @@ pub struct Gfx {
 }
 
 impl Gfx {
-    /// Create a new Gfx instance
     pub fn new(width: u32, height: u32) -> (Self, EventLoop<()>) {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
@@ -145,11 +144,6 @@ fn _fill_circle(frame: &mut [u8], width: u32, center: (i32, i32), radius: i32) {
     }
 }
 pub fn fill_circle(frame: &mut [u8], width: u32, center: (f32, f32), radius: f32) {
-    // if f32::abs(center.0) + f32::abs(radius) > 1.00 || f32::abs(center.1) + f32::abs(radius) > 1.00
-    // {
-    //     // println!("Tried to draw circle at {:?}", center);
-    //     return;
-    // }
     let pixel_center = ndc_to_pix(width, width, center);
     let pixel_radius = (radius * width as f32 / 2.0).round() as i32;
     _fill_circle(frame, width, pixel_center, pixel_radius);
@@ -204,7 +198,6 @@ fn _cpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
 }
 
 fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
-    // Early return if coordinates are invalid
     if x1 > x2
         || y < 0
         || x1 < 0
@@ -214,11 +207,9 @@ fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
         return;
     }
 
-    // Clamp x1 and x2 to valid range
     let x1 = x1.max(0);
     let x2 = x2.min(width as i32 - 1);
 
-    // Compute indices safely
     let start_index = (y as usize * width as usize + x1 as usize) * 4;
     let end_index = (y as usize * width as usize + x2 as usize) * 4 + 4;
     let len = frame.len();
