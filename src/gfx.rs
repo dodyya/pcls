@@ -51,6 +51,7 @@ impl Gfx {
             .zip(particles.2.iter())
             .for_each(|((x, y), r)| {
                 fill_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
+                draw_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
             });
     }
 
@@ -100,6 +101,12 @@ fn _draw_line(frame: &mut [u8], width: u32, start: (i32, i32), end: (i32, i32)) 
         }
         save_my_life -= 1;
     }
+}
+
+pub fn draw_circle(frame: &mut [u8], width: u32, center: (f32, f32), radius: f32) {
+    let pixel_center = ndc_to_pix(width, width, center);
+    let pixel_radius = (radius * width as f32 / 2.0).round() as i32;
+    _draw_circle(frame, width, pixel_center, pixel_radius);
 }
 
 fn _draw_circle(frame: &mut [u8], width: u32, center: (i32, i32), radius: i32) {
@@ -184,7 +191,7 @@ fn _tpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
             pixel.copy_from_slice(&[0, 0, 0, 255]);
         }
     } else {
-        println!("Tried to draw pixel at {:?}", (x, y))
+        // println!("Tried to draw pixel at {:?}", (x, y))
     }
 }
 
@@ -235,6 +242,7 @@ fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
     pixels.copy_from_slice(&white);
 }
 fn _rst(frame: &mut [u8]) {
-    let black = [0, 0, 0, 255].repeat(frame.len() / 4);
-    frame.copy_from_slice(&black)
+    // let black = [0, 0, 0, 255].repeat(frame.len() / 4);
+    // frame.copy_from_slice(&black)
+    frame.fill(0);
 }

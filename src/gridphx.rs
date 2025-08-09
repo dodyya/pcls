@@ -5,6 +5,7 @@ pub struct Phx {
     pub pcls: Particles,
     pub grid: HashGrid,
 }
+const DT: f32 = 1.0 / 12.0;
 
 impl Phx {
     pub fn new(cell_size: f32, p_data: Vec<(f32, f32, f32, f32, f32, f32)>) -> Self {
@@ -14,50 +15,6 @@ impl Phx {
             grid.insert(i, pcls.x[i], pcls.y[i]);
         }
         Self { pcls, grid }
-    }
-
-    pub fn resolve_collisions(&mut self) {
-        let keys: Vec<GridKey> = self.grid.map.keys().cloned().collect();
-
-        for cell_key in keys {
-            let all_relevant_indices = self.grid.get_possible_neighbors(cell_key);
-
-            if let Some(current_cell_indices) = self.grid.map.get(&cell_key).cloned() {
-                for (idx, &i) in current_cell_indices.iter().enumerate() {
-                    for &j in current_cell_indices.iter().skip(idx + 1) {
-                        let (overlap, _) = self.pcls.overlap_info(i, j);
-                        if overlap {
-                            self.pcls.collision(i, j);
-                        }
-                    }
-
-                    for &j in &all_relevant_indices {
-                        if current_cell_indices.contains(&j) {
-                            continue;
-                        }
-
-                        let (overlap, _) = self.pcls.overlap_info(i, j);
-                        if overlap {
-                            self.pcls.collision(i, j);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn resolve_overlap_between(&mut self, i: usize, j: usize) -> bool {
-        if !self.pcls.overlap(i, j) {
-            return false;
-        }
-        let (old_pos_i_x, old_pos_i_y) = (self.pcls.x[i], self.pcls.y[i]);
-        let (old_pos_j_x, old_pos_j_y) = (self.pcls.x[j], self.pcls.y[j]);
-
-        self.grid
-            .update_particle(i, old_pos_i_x, old_pos_i_y, self.pcls.x[i], self.pcls.y[i]);
-        self.grid
-            .update_particle(j, old_pos_j_x, old_pos_j_y, self.pcls.x[j], self.pcls.y[j]);
-        true
     }
 
     pub fn resolve_overlaps(&mut self, max_iterations: usize) {
@@ -72,7 +29,7 @@ impl Phx {
                 if let Some(current_cell_indices) = self.grid.map.get(&key).cloned() {
                     for (idx, &i) in current_cell_indices.iter().enumerate() {
                         for &j in current_cell_indices.iter().skip(idx + 1) {
-                            if self.resolve_overlap_between(i, j) {
+                            if self.pcls.overlap(i, j) {
                                 collision_found = true;
                             }
                         }
@@ -82,7 +39,7 @@ impl Phx {
                                 continue;
                             }
 
-                            if self.resolve_overlap_between(i, j) {
+                            if self.pcls.overlap(i, j) {
                                 collision_found = true;
                             }
                         }
@@ -98,13 +55,13 @@ impl Phx {
 
     /// Update the simulation state.
     pub fn step(&mut self) {
-        self.pcls.integrate_v();
-        self.pcls.resolve_wall_collisions();
-        self.grid.update(&self.pcls);
-        self.resolve_collisions();
-        self.pcls.apply_velocity_damping();
-        self.pcls.apply_gravity();
-        self.resolve_overlaps(30);
+        for _ in 0..10 {
+            self.pcls.apply_gravity();
+            self.pcls.constrain();
+            self.grid.update(&self.pcls);
+            self.resolve_overlaps(1);
+            self.pcls.verlet(DT / 10.0);
+        }
     }
 
     pub fn get_drawable_particles(&self) -> (&[f32], &[f32], &[f32]) {

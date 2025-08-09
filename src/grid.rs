@@ -5,7 +5,6 @@ use crate::particles::{ParticleID, Particles};
 pub type GridKey = (i32, i32);
 
 pub struct HashGrid {
-    cell_size: f32,
     cell_count: i32,
     pub map: HashMap<GridKey, Vec<ParticleID>>,
 }
@@ -13,7 +12,6 @@ pub struct HashGrid {
 impl HashGrid {
     pub fn new(cell_size: f32) -> Self {
         Self {
-            cell_size,
             cell_count: (2.0 / cell_size).ceil() as i32,
             map: HashMap::new(),
         }
@@ -88,9 +86,20 @@ impl HashGrid {
     pub fn update(&mut self, particles: &Particles) {
         self.map.clear();
         for i in 0..particles.count {
-            let key = self.get_grid_key(particles.x[i], particles.y[i]);
-            self.map.entry(key).or_default().push(i);
+            self.map
+                .entry(self.get_grid_key(particles.x[i], particles.y[i]))
+                .or_default()
+                .push(i);
         }
+        // for i in 0..particles.count {
+        //     self.update_particle(
+        //         i,
+        //         particles.ox[i],
+        //         particles.oy[i],
+        //         particles.x[i],
+        //         particles.y[i],
+        //     );
+        // }
     }
 
     pub fn clear(&mut self) {
