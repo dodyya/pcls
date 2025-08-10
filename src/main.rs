@@ -12,19 +12,20 @@ mod gridphx;
 mod particles;
 mod sweep;
 mod sweepphx;
+mod util;
 use gfx::Gfx;
 use gridphx::Phx;
 use rand::Rng;
 // use sweepphx::Phx;
-const MAX_PARTICLE_SIZE: f32 = 0.01;
-const PARTICLE_COUNT: usize = 25;
-const WINDOW_SIZE: u32 = 1500;
+const MAX_PARTICLE_SIZE: f32 = 0.005;
+const PARTICLE_COUNT: usize = 10;
+const WINDOW_SIZE: u32 = 2000;
 const MASS: f32 = 1.0;
 
 fn main() {
     let (mut gfx, event_loop) = Gfx::new(WINDOW_SIZE, WINDOW_SIZE);
 
-    let mut sim = Phx::new(MAX_PARTICLE_SIZE * 2.0);
+    let mut sim = Phx::new_2k(MAX_PARTICLE_SIZE * 2.0);
 
     let mut last_cursor_pos: Option<(f32, f32)> = None;
     let mut mouse_down = false;
@@ -64,9 +65,12 @@ fn main() {
                     for _ in 0..PARTICLE_COUNT {
                         let dx = rng.gen_range(-0.2..0.2);
                         let dy = rng.gen_range(-0.2..0.2);
-                        let r = rng.gen_range(0.005..MAX_PARTICLE_SIZE);
+                        let r = MAX_PARTICLE_SIZE;
 
                         sim.add_particle(sim_x + dx, sim_y + dy, r, 0.0, 0.0, MASS * r * r);
+                        if PARTICLE_COUNT == 1 {
+                            mouse_down = false;
+                        }
                     }
                 }
             }
@@ -106,14 +110,20 @@ fn main() {
                     we::KeyboardInput {
                         input:
                             winit::event::KeyboardInput {
-                                virtual_keycode: Some(winit::event::VirtualKeyCode::Space),
+                                virtual_keycode: Some(k),
                                 state: winit::event::ElementState::Pressed,
                                 ..
                             },
                         ..
-                    } => {
-                        sim.toggle_gravity();
-                    }
+                    } => match k {
+                        winit::event::VirtualKeyCode::Space => {
+                            sim.toggle_gravity();
+                        }
+                        winit::event::VirtualKeyCode::S => {
+                            sim.stop();
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }

@@ -15,7 +15,7 @@ pub struct Particles {
 const GRAVITY: f32 = 0.1;
 // const GRAVITY_TOWARDS_CENTER: bool = false;
 const WASHING_MACHINE: bool = false;
-const RESTITUTION: f32 = 0.75;
+const RESTITUTION: f32 = 0.6;
 
 pub type ParticleID = usize;
 
@@ -179,5 +179,9 @@ impl Particles {
                 }
             }
         }
+    }
+    pub fn stop(&mut self) {
+        self.ox = self.x.clone();
+        self.oy = self.y.clone();
     }
 }
