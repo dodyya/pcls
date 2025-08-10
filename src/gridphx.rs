@@ -1,4 +1,5 @@
 use crate::grid::{GridKey, HashGrid};
+use crate::particles::ParticleID;
 
 use crate::particles::Particles;
 pub struct Phx {
@@ -8,8 +9,10 @@ pub struct Phx {
 const DT: f32 = 1.0 / 12.0;
 
 impl Phx {
-    pub fn new(cell_size: f32, p_data: Vec<(f32, f32, f32, f32, f32, f32)>) -> Self {
-        let pcls = Particles::from_particles(p_data);
+    pub fn new(cell_size: f32) -> Self {
+        let mut pcls = Particles::new(20_000);
+        pcls.add_10k(0.0, 0.0, 0.005, 1.0);
+        pcls.add_10k(0.0, 0.0, 0.005, 1.0);
         let mut grid = HashGrid::new(cell_size);
         for i in 0..pcls.count {
             grid.insert(i, pcls.x[i], pcls.y[i]);
@@ -17,49 +20,35 @@ impl Phx {
         Self { pcls, grid }
     }
 
-    pub fn resolve_overlaps(&mut self, max_iterations: usize) {
-        for _ in 0..max_iterations {
-            let mut collision_found = false;
+    pub fn resolve_overlaps(&mut self) {
+        let all_keys: Vec<GridKey> = self.grid.map.keys().cloned().collect();
+        let relative_positions = [(1, 0), (1, 1), (0, 1), (-1, 1)];
+        for key in all_keys {
+            if let Some(my_ids) = self.grid.map.get(&key).cloned() {
+                for (idx, &i) in my_ids.iter().enumerate() {
+                    for &j in my_ids.iter().skip(idx + 1) {
+                        self.pcls.overlap(i, j);
+                    }
 
-            let cell_keys: Vec<GridKey> = self.grid.map.keys().cloned().collect();
-
-            for key in cell_keys {
-                let all_relevant_indices = self.grid.get_possible_neighbors(key);
-
-                if let Some(current_cell_indices) = self.grid.map.get(&key).cloned() {
-                    for (idx, &i) in current_cell_indices.iter().enumerate() {
-                        for &j in current_cell_indices.iter().skip(idx + 1) {
-                            if self.pcls.overlap(i, j) {
-                                collision_found = true;
-                            }
-                        }
-
-                        for &j in &all_relevant_indices {
-                            if current_cell_indices.contains(&j) {
-                                continue;
-                            }
-
-                            if self.pcls.overlap(i, j) {
-                                collision_found = true;
+                    for (dx, dy) in relative_positions.iter() {
+                        let cell_key = (key.0 + dx, key.1 + dy);
+                        if let Some(indices) = self.grid.map.get(&cell_key) {
+                            for &j in indices.iter() {
+                                self.pcls.overlap(i, j);
                             }
                         }
                     }
                 }
             }
-
-            if !collision_found {
-                break;
-            }
         }
     }
 
-    /// Update the simulation state.
     pub fn step(&mut self) {
         for _ in 0..10 {
             self.pcls.apply_gravity();
             self.pcls.constrain();
             self.grid.update(&self.pcls);
-            self.resolve_overlaps(1);
+            self.resolve_overlaps();
             self.pcls.verlet(DT / 10.0);
         }
     }
@@ -73,9 +62,11 @@ impl Phx {
         self.grid.insert(self.pcls.count - 1, x, y);
     }
 
-    /// Clear all particles and grid data
     pub fn clear(&mut self) {
         self.pcls.clear();
         self.grid.clear();
+    }
+    pub fn toggle_gravity(&mut self) {
+        self.pcls.g_toward_center = !self.pcls.g_toward_center;
     }
 }

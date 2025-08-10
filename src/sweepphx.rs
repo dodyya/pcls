@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
 use crate::particles::{ParticleID, Particles};
 use crate::sweep::SweepAndPrune;
 
@@ -9,9 +6,12 @@ pub struct Phx {
     pub broadphase: SweepAndPrune,
 }
 
+const DT: f32 = 1.0 / 12.0;
 impl Phx {
-    pub fn new(_cell_size: f32, particles_data: Vec<(f32, f32, f32, f32, f32, f32)>) -> Self {
-        let particles = Particles::from_particles(particles_data);
+    pub fn new(cell_size: f32) -> Self {
+        let mut particles = Particles::new(20_000);
+        particles.add_10k(0.0, 0.0, 0.005, 1.0);
+        particles.add_10k(0.0, 0.0, 0.005, 1.0);
         let broadphase = SweepAndPrune::new(&particles);
 
         Self {
@@ -20,57 +20,32 @@ impl Phx {
         }
     }
 
-    pub fn update_kinematics(&mut self) {
-        self.pcls.integrate_v();
-        self.broadphase.update(&self.pcls);
-    }
+    pub fn resolve_overlaps(&mut self) {
+        let entries = &self.broadphase.entries_x;
 
-    pub fn resolve_wall_collisions(&mut self) {
-        self.pcls.resolve_wall_collisions();
-        self.broadphase.update(&self.pcls);
-    }
+        for i in 0..entries.len() {
+            let entry_i = entries[i];
 
-    pub fn resolve_collisions(&mut self) {
-        let potential_collisions = self.broadphase.get_potential_collisions();
+            for j in (i + 1)..entries.len() {
+                let entry_j = entries[j];
 
-        for (i, j) in potential_collisions {
-            let (overlap, _) = self.pcls.overlap_info(i, j);
-            if overlap {
-                self.pcls.collision(i, j);
-            }
-        }
-    }
-
-    pub fn resolve_overlaps(&mut self, max_iterations: usize) {
-        for _ in 0..max_iterations {
-            let mut collision_found = false;
-
-            let potential_collisions = self.broadphase.get_potential_collisions();
-
-            for (i, j) in potential_collisions {
-                if self.pcls.overlap(i, j) {
-                    collision_found = true;
+                if entry_j.min > entry_i.max {
+                    break;
                 }
-            }
-
-            self.broadphase.update(&self.pcls);
-
-            if !collision_found {
-                break;
+                self.pcls.overlap(entry_i.id, entry_j.id);
             }
         }
+        self.broadphase.update(&self.pcls);
     }
 
     pub fn step(&mut self) {
-        self.pcls.apply_gravity();
-        self.pcls.apply_velocity_damping();
-        self.pcls.integrate_v();
-
-        self.broadphase.update(&self.pcls);
-        self.pcls.resolve_wall_collisions();
-
-        self.resolve_overlaps(3);
-        self.resolve_collisions();
+        for _ in 0..10 {
+            self.pcls.apply_gravity();
+            self.pcls.constrain();
+            self.broadphase.update(&self.pcls);
+            self.resolve_overlaps();
+            self.pcls.verlet(DT / 10.0);
+        }
     }
 
     pub fn get_drawable_particles(&self) -> (&[f32], &[f32], &[f32]) {
@@ -78,18 +53,16 @@ impl Phx {
     }
 
     pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, vx: f32, vy: f32, mass: f32) {
-        self.pcls.x.push(x);
-        self.pcls.y.push(y);
-        self.pcls.radius.push(radius);
-        self.pcls.vx.push(vx);
-        self.pcls.vy.push(vy);
-        self.pcls.mass.push(mass);
-        self.pcls.count += 1;
-        self.broadphase.rebuild(&self.pcls);
+        self.pcls.push((x, y, radius, vx, vy, mass));
+        self.broadphase.insert(self.pcls.count - 1, x, y, radius);
     }
 
     pub fn clear(&mut self) {
         self.pcls.clear();
         self.broadphase.clear();
+    }
+
+    pub fn toggle_gravity(&mut self) {
+        self.pcls.g_toward_center = !self.pcls.g_toward_center;
     }
 }

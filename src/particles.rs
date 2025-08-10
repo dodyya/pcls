@@ -1,3 +1,4 @@
+use rand::Rng;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Particles {
     pub x: Vec<f32>,
@@ -9,9 +10,10 @@ pub struct Particles {
     pub radius: Vec<f32>,
     pub mass: Vec<f32>,
     pub count: usize,
+    pub g_toward_center: bool,
 }
 const GRAVITY: f32 = 0.1;
-const GRAVITY_TOWARDS_CENTER: bool = true;
+// const GRAVITY_TOWARDS_CENTER: bool = false;
 const WASHING_MACHINE: bool = false;
 const RESTITUTION: f32 = 0.75;
 
@@ -29,7 +31,22 @@ impl Particles {
             radius: Vec::with_capacity(capacity),
             mass: Vec::with_capacity(capacity),
             count: 0,
+            g_toward_center: false,
         }
+    }
+
+    pub fn add_10k(&mut self, x: f32, y: f32, r: f32, m: f32) {
+        for _ in 0..10_000 {
+            self.x.push(x);
+            self.y.push(y);
+            self.radius.push(r);
+            self.ox.push(x);
+            self.oy.push(y);
+            self.ax.push(0.0);
+            self.ay.push(0.0);
+            self.mass.push(m);
+        }
+        self.count += 10_000;
     }
 
     pub fn from_particles(particles: Vec<(f32, f32, f32, f32, f32, f32)>) -> Self {
@@ -72,7 +89,7 @@ impl Particles {
 
     pub fn apply_gravity(&mut self) {
         for i in 0..self.count {
-            if GRAVITY_TOWARDS_CENTER {
+            if self.g_toward_center {
                 let r2 = self.x[i].abs().powi(2) + self.y[i].abs().powi(2);
                 let v_x = self.x[i] / (r2.sqrt());
                 let v_y = self.y[i] / (r2.sqrt());
@@ -84,28 +101,33 @@ impl Particles {
         }
     }
 
-    pub fn overlap(&mut self, i: usize, j: usize) -> bool {
+    pub fn overlap(&mut self, i: usize, j: usize) {
         if i == j {
-            return false;
+            return;
         }
         let dx = self.x[i] - self.x[j];
         let dy = self.y[i] - self.y[j];
         let distance_sq = dx * dx + dy * dy;
-        let distance = distance_sq.sqrt();
-        if distance > (self.radius[i] + self.radius[j]) {
-            return false;
+        let ri = self.radius[i];
+        let rj = self.radius[j];
+        if distance_sq > (ri + rj).powi(2) {
+            return;
         }
 
+        let distance = distance_sq.sqrt();
         let (normal_x, normal_y) = if distance != 0.0 {
             (dx / distance, dy / distance)
         } else {
-            (1.0, 0.0)
+            let theta = rand::thread_rng().gen_range(0.0..std::f32::consts::PI * 2.0);
+            (theta.cos(), theta.sin())
         };
 
-        let mass_ratio_1 = self.mass[i] / (self.mass[i] + self.mass[j]);
-        let mass_ratio_2 = self.mass[j] / (self.mass[i] + self.mass[j]);
+        let mi = self.mass[i];
+        let mj = self.mass[j];
+        let mass_ratio_1 = mi / (mi + mj);
+        let mass_ratio_2 = mj / (mi + mj);
 
-        let overlap_distance = self.radius[i] + self.radius[j] - distance;
+        let overlap_distance = ri + rj - distance;
         let correction_x = RESTITUTION * normal_x * overlap_distance * 0.5;
         let correction_y = RESTITUTION * normal_y * overlap_distance * 0.5;
 
@@ -113,17 +135,18 @@ impl Particles {
         self.y[i] += correction_y * mass_ratio_2;
         self.x[j] -= correction_x * mass_ratio_1;
         self.y[j] -= correction_y * mass_ratio_1;
-        true
     }
 
     pub fn verlet(&mut self, dt: f32) {
         for i in 0..self.count {
-            let vx = self.x[i] - self.ox[i];
-            let vy = self.y[i] - self.oy[i];
-            self.ox[i] = self.x[i];
-            self.oy[i] = self.y[i];
-            self.x[i] = self.x[i] + vx + self.ax[i] * dt * dt;
-            self.y[i] = self.y[i] + vy + self.ay[i] * dt * dt;
+            let x = self.x[i];
+            let y = self.y[i];
+            let vx = x - self.ox[i];
+            let vy = y - self.oy[i];
+            self.ox[i] = x;
+            self.oy[i] = y;
+            self.x[i] = x + vx + self.ax[i] * dt * dt;
+            self.y[i] = y + vy + self.ay[i] * dt * dt;
             self.ax[i] = 0.0;
             self.ay[i] = 0.0;
         }
@@ -143,15 +166,16 @@ impl Particles {
                     self.y[i] *= factor;
                 }
             } else {
-                if self.x[i] + self.radius[i] > 1.0 {
-                    self.x[i] = 1.0 - self.radius[i];
-                } else if self.x[i] - self.radius[i] < -1.0 {
-                    self.x[i] = -1.0 + self.radius[i];
+                let r = self.radius[i];
+                if self.x[i] + r > 1.0 {
+                    self.x[i] = 1.0 - r;
+                } else if self.x[i] - r < -1.0 {
+                    self.x[i] = -1.0 + r;
                 }
-                if self.y[i] + self.radius[i] > 1.0 {
-                    self.y[i] = 1.0 - self.radius[i];
-                } else if self.y[i] - self.radius[i] < -1.0 {
-                    self.y[i] = -1.0 + self.radius[i];
+                if self.y[i] + r > 1.0 {
+                    self.y[i] = 1.0 - r;
+                } else if self.y[i] - r < -1.0 {
+                    self.y[i] = -1.0 + r;
                 }
             }
         }
