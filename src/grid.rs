@@ -5,12 +5,13 @@ const DEPTH: usize = 4;
 
 // pub type GridKey = (i32, i32);
 
-pub struct HashGrid {
+#[derive(Debug)]
+pub struct Grid {
     pub cell_count: usize,
     pub map: Array3D<Option<ParticleID>>,
 }
 
-impl HashGrid {
+impl Grid {
     pub fn new(cell_size: f32) -> Self {
         let cell_count = (2.0 / cell_size).ceil() as usize;
         Self {

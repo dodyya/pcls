@@ -87,7 +87,6 @@ impl Particles {
         self.count += 1;
     }
 
-    #[inline(never)]
     pub fn apply_gravity(&mut self) {
         for i in 0..self.count {
             if self.g_toward_center {
