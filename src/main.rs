@@ -1,133 +1,24 @@
-use std::time::{Duration, Instant};
-
-use winit::event::WindowEvent as we;
-use winit::{
-    event::{ElementState, Event, MouseButton},
-    event_loop::ControlFlow,
-};
-
 mod gfx;
 mod grid;
 mod gridphx;
 mod particles;
-mod sweep;
-mod sweepphx;
+// mod sweep;
+// mod sweepphx;
 mod util;
-use gfx::Gfx;
-use gridphx::Phx;
-use rand::Rng;
-// use sweepphx::Phx;
-const MAX_PARTICLE_SIZE: f32 = 0.005;
-const PARTICLE_COUNT: usize = 10;
-const WINDOW_SIZE: u32 = 2000;
-const MASS: f32 = 1.0;
-
+mod vis;
+use crate::vis::Visualization;
+use std::thread;
 fn main() {
-    let (mut gfx, event_loop) = Gfx::new(WINDOW_SIZE, WINDOW_SIZE);
-
-    let mut sim = Phx::new_2k(MAX_PARTICLE_SIZE * 2.0);
-
-    let mut last_cursor_pos: Option<(f32, f32)> = None;
-    let mut mouse_down = false;
-    let mut rng = rand::thread_rng();
-    let mut ticker: u8 = 0;
-    let mut last_frame_start = Instant::now();
-    let mut frame_time = Duration::ZERO;
-
-    event_loop.run(move |event, _, control_flow| {
-        if ticker == 0 {
-            gfx.window.set_title(&format!(
-                "Verlet particle simulation: {} particles - FPS: {:.0}",
-                sim.pcls.count,
-                1.0 / frame_time.as_secs_f64() as f64
-            ))
+    // let vis = Visualization::new();
+    // vis.run();
+    let a = thread::spawn(|| {
+        let mut john = vec![0u32; 1000_000];
+        for (i, j) in john.iter_mut().enumerate() {
+            *j = i as u32;
         }
-        ticker = ticker.wrapping_add(8);
-
-        gfx.clear_frame();
-        gfx.draw_particles(sim.get_drawable_particles());
-        gfx.render();
-
-        frame_time = last_frame_start.elapsed();
-        last_frame_start = Instant::now();
-        sim.step();
-
-        if mouse_down {
-            if let Some((cursor_x, cursor_y)) = last_cursor_pos {
-                if cursor_x >= 0.0
-                    && cursor_x <= WINDOW_SIZE as f32
-                    && cursor_y >= 0.0
-                    && cursor_y <= WINDOW_SIZE as f32
-                {
-                    let sim_x = (cursor_x / WINDOW_SIZE as f32) * 2.0 - 1.0;
-                    let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as f32) * 2.0;
-
-                    for _ in 0..PARTICLE_COUNT {
-                        let dx = rng.gen_range(-0.2..0.2);
-                        let dy = rng.gen_range(-0.2..0.2);
-                        let r = MAX_PARTICLE_SIZE;
-
-                        sim.add_particle(sim_x + dx, sim_y + dy, r, 0.0, 0.0, MASS * r * r);
-                        if PARTICLE_COUNT == 1 {
-                            mouse_down = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        match &event {
-            Event::WindowEvent { window_id, event } => {
-                if *window_id != gfx.window.id() {
-                    return;
-                }
-                match event {
-                    we::CloseRequested => {
-                        *control_flow = ControlFlow::Exit;
-                        return;
-                    }
-                    we::CursorMoved { position, .. } => {
-                        last_cursor_pos = Some((position.x as f32, position.y as f32));
-                    }
-                    we::MouseInput {
-                        state: winit::event::ElementState::Pressed,
-                        button,
-                        ..
-                    } => {
-                        if *button == MouseButton::Left {
-                            mouse_down = true;
-                        } else if *button == MouseButton::Right {
-                            sim.clear();
-                        }
-                    }
-                    we::MouseInput {
-                        state: winit::event::ElementState::Released,
-                        button: winit::event::MouseButton::Left,
-                        ..
-                    } => {
-                        mouse_down = false;
-                    }
-                    we::KeyboardInput {
-                        input:
-                            winit::event::KeyboardInput {
-                                virtual_keycode: Some(k),
-                                state: winit::event::ElementState::Pressed,
-                                ..
-                            },
-                        ..
-                    } => match k {
-                        winit::event::VirtualKeyCode::Space => {
-                            sim.toggle_gravity();
-                        }
-                        winit::event::VirtualKeyCode::S => {
-                            sim.stop();
-                        }
-                        _ => {}
-                    },
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
+        dbg!(john[888]);
     });
+    dbg!(&a);
+    let a_result = a.join();
+    dbg!(a_result);
 }

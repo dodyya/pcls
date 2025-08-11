@@ -87,6 +87,7 @@ impl Particles {
         self.count += 1;
     }
 
+    #[inline(never)]
     pub fn apply_gravity(&mut self) {
         for i in 0..self.count {
             if self.g_toward_center {
@@ -101,20 +102,23 @@ impl Particles {
         }
     }
 
-    pub fn overlap(&mut self, i: usize, j: usize) {
-        if i == j {
-            return;
-        }
-        let dx = self.x[i] - self.x[j];
-        let dy = self.y[i] - self.y[j];
+    // #[inline(never)]
+    pub unsafe fn overlap(&mut self, i: usize, j: usize) {
+        let &xi = self.x.get_unchecked(i);
+        let &xj = self.x.get_unchecked(j);
+        let &yi = self.y.get_unchecked(i);
+        let &yj = self.y.get_unchecked(j);
+        let dx = xi - xj;
+        let dy = yi - yj;
         let distance_sq = dx * dx + dy * dy;
-        let ri = self.radius[i];
-        let rj = self.radius[j];
-        if distance_sq > (ri + rj).powi(2) {
+        let ri = self.radius.get_unchecked(i);
+        let rj = self.radius.get_unchecked(j);
+        if distance_sq > (ri + rj) * (ri + rj) {
             return;
         }
 
         let distance = distance_sq.sqrt();
+        let overlap_distance = ri + rj - distance;
         let (normal_x, normal_y) = if distance != 0.0 {
             (dx / distance, dy / distance)
         } else {
@@ -122,19 +126,19 @@ impl Particles {
             (theta.cos(), theta.sin())
         };
 
-        let mi = self.mass[i];
-        let mj = self.mass[j];
+        let mi = self.mass.get_unchecked(i);
+        let mj = self.mass.get_unchecked(j);
         let mass_ratio_1 = mi / (mi + mj);
         let mass_ratio_2 = mj / (mi + mj);
 
-        let overlap_distance = ri + rj - distance;
-        let correction_x = RESTITUTION * normal_x * overlap_distance * 0.5;
-        let correction_y = RESTITUTION * normal_y * overlap_distance * 0.5;
+        let correction = RESTITUTION * overlap_distance * 0.5;
+        let correction_x = correction * normal_x;
+        let correction_y = correction * normal_y;
 
-        self.x[i] += correction_x * mass_ratio_2;
-        self.y[i] += correction_y * mass_ratio_2;
-        self.x[j] -= correction_x * mass_ratio_1;
-        self.y[j] -= correction_y * mass_ratio_1;
+        *self.x.get_unchecked_mut(i) = xi + correction_x * mass_ratio_2;
+        *self.y.get_unchecked_mut(i) = yi + correction_y * mass_ratio_2;
+        *self.x.get_unchecked_mut(j) = xj - correction_x * mass_ratio_1;
+        *self.y.get_unchecked_mut(j) = yj - correction_y * mass_ratio_1;
     }
 
     pub fn verlet(&mut self, dt: f32) {
@@ -152,6 +156,7 @@ impl Particles {
         }
     }
 
+    #[inline(never)]
     pub fn constrain(&mut self) {
         for i in 0..self.count {
             if WASHING_MACHINE {

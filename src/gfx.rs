@@ -241,7 +241,7 @@ fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
     let white = vec![255; end_index - start_index];
     pixels.copy_from_slice(&white);
 }
-fn _rst(frame: &mut [u8]) {
+pub fn _rst(frame: &mut [u8]) {
     // let black = [0, 0, 0, 255].repeat(frame.len() / 4);
     // frame.copy_from_slice(&black)
     frame.fill(0);
