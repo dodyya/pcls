@@ -96,7 +96,10 @@ impl<T> Index<(usize, usize, usize)> for Array3D<T> {
                 index.0, index.1, index.2, self.width, self.height, self.depth
             );
         }
-        &self.data[(index.0 * self.height + index.1) * self.depth + index.2]
+        unsafe {
+            self.data
+                .get_unchecked((index.0 * self.height + index.1) * self.depth + index.2)
+        }
     }
 }
 
@@ -108,7 +111,10 @@ impl<T> IndexMut<(usize, usize, usize)> for Array3D<T> {
                 index.0, index.1, index.2, self.width, self.height, self.depth
             );
         }
-        &mut self.data[(index.0 * self.height + index.1) * self.depth + index.2]
+        unsafe {
+            self.data
+                .get_unchecked_mut((index.0 * self.height + index.1) * self.depth + index.2)
+        }
     }
 }
 
@@ -123,35 +129,7 @@ impl<'a, T: 'a> Index<(usize, usize)> for Array3D<T> {
             );
         }
         let start = (index.0 * self.height + index.1) * self.depth;
-        &self.data[start..start + self.depth]
-    }
-}
-
-impl<'a, T: 'a> Index<(usize, usize)> for &Array3D<T> {
-    type Output = [T];
-
-    fn index(&self, index: (usize, usize)) -> &Self::Output {
-        if index.0 >= self.width || index.1 >= self.height {
-            panic!(
-                "Index out of bounds: ({},{}) not in [0,{})x[0,{})",
-                index.0, index.1, self.width, self.height,
-            );
-        }
-        let start = (index.0 * self.height + index.1) * self.depth;
-        &self.data[start..start + self.depth]
-    }
-}
-
-impl<'a, T: 'a> IndexMut<(usize, usize)> for Array3D<T> {
-    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
-        if index.0 >= self.width || index.1 >= self.height {
-            panic!(
-                "Index out of bounds: ({},{}) not in [0,{})x[0,{})",
-                index.0, index.1, self.width, self.height,
-            );
-        }
-        let start = (index.1 * self.width + index.0) * self.depth;
-        &mut self.data[start..start + self.depth]
+        unsafe { self.data.get_unchecked(start..start + self.depth) }
     }
 }
 
@@ -174,22 +152,5 @@ where
             }
         }
         Ok(())
-    }
-}
-
-impl<'a, T> Array3D<T> {
-    pub unsafe fn split(&self, exp: u32) -> Vec<&[T]> {
-        let n = 2usize.pow(exp);
-        let mut out = Vec::with_capacity(n);
-        let len = self.data.len() / n;
-        let ptr = self.data.as_ptr();
-        for i in 0..n {
-            out.push(
-                slice_from_raw_parts(ptr.add(i * len), len)
-                    .as_ref()
-                    .unwrap(),
-            );
-        }
-        out
     }
 }

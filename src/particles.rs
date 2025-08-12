@@ -1,5 +1,5 @@
 use atomic_float::AtomicF32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::Relaxed as O;
 
 use rand::Rng;
 #[derive(Debug)]
@@ -15,12 +15,6 @@ pub struct Particles {
     pub count: usize,
     pub g_toward_center: bool,
 }
-const GRAVITY: f32 = 0.1;
-const WASHING_MACHINE: bool = false;
-const RESTITUTION: f32 = 0.9;
-const ANTI_BLACK_HOLE: f32 = 0.5;
-const MAX_V: f32 = 0.01;
-pub(crate) const O: Ordering = Ordering::Relaxed;
 
 impl Particles {
     pub fn new(capacity: usize) -> Self {
@@ -62,7 +56,7 @@ impl Particles {
         self.count = 0;
     }
 
-    pub fn push(&mut self, particle: (f32, f32, f32, f32, f32, f32)) {
+    pub fn push(&mut self, particle: (f32, f32, f32, f32, f32, f32)) -> usize {
         self.x.push(AtomicF32::new(particle.0));
         self.y.push(AtomicF32::new(particle.1));
         self.r.push(AtomicF32::new(particle.2));
@@ -73,113 +67,50 @@ impl Particles {
         self.m.push(AtomicF32::new(particle.5));
 
         self.count += 1;
+        self.count - 1
     }
 
-    pub fn apply_gravity(&self) {
-        for i in 0..self.count {
-            if self.g_toward_center {
-                let x = self.x[i].load(O);
-                let y = self.y[i].load(O);
-                let r2 = x.abs().powi(2) + y.abs().powi(2);
-                let v_x = x / (r2.sqrt());
-                let v_y = y / (r2.sqrt());
-                self.ax[i].store(-GRAVITY * v_x * (1.0 / (r2 + ANTI_BLACK_HOLE)), O);
-                self.ay[i].store(-GRAVITY * v_y * (1.0 / (r2 + ANTI_BLACK_HOLE)), O);
-            } else {
-                self.ay[i].store(-GRAVITY, O);
-            }
-        }
+    pub fn get_x(&self, i: usize) -> f32 {
+        self.x[i].load(O)
+    }
+    pub fn get_y(&self, i: usize) -> f32 {
+        self.y[i].load(O)
+    }
+    pub fn get_ox(&self, i: usize) -> f32 {
+        self.ox[i].load(O)
+    }
+    pub fn get_oy(&self, i: usize) -> f32 {
+        self.oy[i].load(O)
+    }
+    pub fn get_ax(&self, i: usize) -> f32 {
+        self.ax[i].load(O)
+    }
+    pub fn get_ay(&self, i: usize) -> f32 {
+        self.ay[i].load(O)
+    }
+    pub fn get_r(&self, i: usize) -> f32 {
+        self.r[i].load(O)
+    }
+    pub fn get_m(&self, i: usize) -> f32 {
+        self.m[i].load(O)
     }
 
-    // #[inline(never)]
-    pub fn overlap(&self, i: usize, j: usize) {
-        let xi = self.x[i].load(O);
-        let xj = self.x[j].load(O);
-        let yi = self.y[i].load(O);
-        let yj = self.y[j].load(O);
-        let dx = xi - xj;
-        let dy = yi - yj;
-        let distance_sq = dx * dx + dy * dy;
-        let ri = self.r[i].load(O);
-        let rj = self.r[j].load(O);
-        if distance_sq > (ri + rj) * (ri + rj) {
-            return;
-        }
-
-        let distance = distance_sq.sqrt();
-        let overlap_distance = ri + rj - distance;
-        let (normal_x, normal_y) = if distance != 0.0 {
-            (dx / distance, dy / distance)
-        } else {
-            let theta = rand::thread_rng().gen_range(0.0..std::f32::consts::PI * 2.0);
-            (theta.cos(), theta.sin())
-        };
-
-        let mi = self.m[i].load(O);
-        let mj = self.m[j].load(O);
-        let mass_ratio_1 = mi / (mi + mj);
-        let mass_ratio_2 = mj / (mi + mj);
-
-        let correction = RESTITUTION * overlap_distance * 0.5;
-        let correction_x = correction * normal_x;
-        let correction_y = correction * normal_y;
-
-        self.x[i].store(xi + correction_x * mass_ratio_2, O);
-        self.y[i].store(yi + correction_y * mass_ratio_2, O);
-        self.x[j].store(xj - correction_x * mass_ratio_1, O);
-        self.y[j].store(yj - correction_y * mass_ratio_1, O);
+    pub fn set_x(&self, i: usize, data: f32) {
+        self.x[i].store(data, O)
     }
-
-    pub fn verlet(&self, dt: f32) {
-        for i in 0..self.count {
-            let x = self.x[i].load(O);
-            let y = self.y[i].load(O);
-            let vx = (x - self.ox[i].load(O)).clamp(-MAX_V, MAX_V);
-            let vy = (y - self.oy[i].load(O)).clamp(-MAX_V, MAX_V);
-            self.ox[i].store(x, O);
-            self.oy[i].store(y, O);
-            self.x[i].store(x + vx + self.ax[i].load(O) * dt * dt, O);
-            self.y[i].store(y + vy + self.ay[i].load(O) * dt * dt, O);
-            self.ax[i].store(0.0, O);
-            self.ay[i].store(0.0, O);
-        }
+    pub fn set_y(&self, i: usize, data: f32) {
+        self.y[i].store(data, O)
     }
-
-    #[inline(never)]
-    pub fn constrain(&self) {
-        for i in 0..self.count {
-            let x = self.x[i].load(O);
-            let y = self.y[i].load(O);
-            let r = self.r[i].load(O);
-            if WASHING_MACHINE {
-                let center_dist = (x * x + y * y).sqrt();
-                let factor = if center_dist + r > 1.0 {
-                    (1.0 - r) / center_dist
-                } else if center_dist - r < 0.3 {
-                    (0.3 + r) / center_dist
-                } else {
-                    1.0
-                };
-                self.x[i].store(x * factor, O);
-                self.y[i].store(y * factor, O);
-            } else {
-                if x + r > 1.0 {
-                    self.x[i].store(1.0 - r, O);
-                } else if x - r < -1.0 {
-                    self.x[i].store(-1.0 + r, O);
-                }
-                if y + r > 1.0 {
-                    self.y[i].store(1.0 - r, O);
-                } else if y - r < -1.0 {
-                    self.y[i].store(-1.0 + r, O);
-                }
-            }
-        }
+    pub fn set_ox(&self, i: usize, data: f32) {
+        self.ox[i].store(data, O)
     }
-    pub fn stop(&self) {
-        for i in 0..self.count {
-            self.oy[i].store(self.x[i].load(O), O);
-            self.oy[i].store(self.y[i].load(O), O);
-        }
+    pub fn set_oy(&self, i: usize, data: f32) {
+        self.oy[i].store(data, O)
+    }
+    pub fn set_ax(&self, i: usize, data: f32) {
+        self.ax[i].store(data, O)
+    }
+    pub fn set_ay(&self, i: usize, data: f32) {
+        self.ay[i].store(data, O)
     }
 }

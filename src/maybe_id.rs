@@ -1,6 +1,5 @@
+use std::sync::atomic::Ordering::Relaxed as O;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-
-use crate::particles::O;
 
 #[derive(Debug)]
 pub struct MaybeID {
@@ -31,7 +30,6 @@ impl MaybeID {
 
     pub fn make_empty(&self) {
         self.some.store(false, O);
-        self.id.store(0, O);
     }
 }
 
