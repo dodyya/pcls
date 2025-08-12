@@ -1,6 +1,8 @@
-use crate::util::Array3D;
+use crate::array::Array3D;
+use crate::particles::O;
 
-use crate::particles::{ParticleID, Particles};
+use crate::maybe_id::MaybeID;
+use crate::particles::Particles;
 const DEPTH: usize = 4;
 
 // pub type GridKey = (i32, i32);
@@ -8,7 +10,7 @@ const DEPTH: usize = 4;
 #[derive(Debug)]
 pub struct Grid {
     pub cell_count: usize,
-    pub map: Array3D<Option<ParticleID>>,
+    pub map: Array3D<MaybeID>,
 }
 
 impl Grid {
@@ -27,24 +29,27 @@ impl Grid {
         (x_index, y_index)
     }
 
-    pub fn try_insert(&mut self, id: usize, x: f32, y: f32) {
+    pub fn try_insert(&self, id: usize, x: f32, y: f32) {
         let ind = self.index(x, y);
-        let cell = &mut self.map[ind];
+        let cell = &self.map[ind];
         for j in 0..DEPTH {
-            if cell[j] == None {
-                cell[j] = Some(id);
+            if cell[j].is_none() {
+                cell[j].set(id);
+                break;
             }
         }
     }
 
-    pub fn update(&mut self, particles: &Particles) {
+    pub fn update(&self, particles: &Particles) {
         self.map.clear();
         for i in 0..particles.count {
-            let ind = self.index(particles.x[i], particles.y[i]);
-            let cell = &mut self.map[ind];
+            let x = particles.x[i].load(O);
+            let y = particles.y[i].load(O);
+            let ind = self.index(x, y);
+            let cell = &self.map[ind];
             for d in 0..DEPTH {
-                if cell[d] == None {
-                    cell[d] = Some(i);
+                if cell[d].is_none() {
+                    cell[d].set(i);
                     break;
                 }
             }

@@ -1,5 +1,5 @@
-use crate::gfx;
 use crate::gridphx::Phx;
+use crate::{gfx, particles::O};
 use pixels::{Pixels, SurfaceTexture};
 use std::time::{Duration, Instant};
 use winit::{
@@ -173,7 +173,7 @@ impl Visualization {
             pixels,
             width,
             height,
-            sim: Phx::new_2k(MAX_PARTICLE_SIZE * 2.0),
+            sim: Phx::new(MAX_PARTICLE_SIZE * 2.0),
             event_loop,
         }
     }
@@ -187,7 +187,7 @@ fn display(frame: &mut [u8], sim: &Phx, width: u32) {
         .zip(particles.1.iter())
         .zip(particles.2.iter())
         .for_each(|((x, y), r)| {
-            gfx::fill_circle(frame, width, (*x, *y), *r);
-            gfx::draw_circle(frame, width, (*x, *y), *r);
+            gfx::fill_circle(frame, width, (x.load(O), y.load(O)), r.load(O));
+            gfx::draw_circle(frame, width, (x.load(O), y.load(O)), r.load(O));
         });
 }
