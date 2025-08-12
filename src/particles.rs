@@ -1,11 +1,5 @@
 use atomic_float::AtomicF32;
-use std::{
-    iter::repeat_n,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, RwLock,
-    },
-};
+use std::sync::atomic::Ordering;
 
 use rand::Rng;
 #[derive(Debug)]
@@ -22,10 +16,11 @@ pub struct Particles {
     pub g_toward_center: bool,
 }
 const GRAVITY: f32 = 0.1;
-// const GRAVITY_TOWARDS_CENTER: bool = false;
 const WASHING_MACHINE: bool = false;
-const RESTITUTION: f32 = 0.6;
-pub(crate) const O: Ordering = Ordering::SeqCst;
+const RESTITUTION: f32 = 0.9;
+const ANTI_BLACK_HOLE: f32 = 0.5;
+const MAX_V: f32 = 0.01;
+pub(crate) const O: Ordering = Ordering::Relaxed;
 
 impl Particles {
     pub fn new(capacity: usize) -> Self {
@@ -88,8 +83,8 @@ impl Particles {
                 let r2 = x.abs().powi(2) + y.abs().powi(2);
                 let v_x = x / (r2.sqrt());
                 let v_y = y / (r2.sqrt());
-                self.ax[i].store(-GRAVITY * v_x * (1.0 / (r2 + 0.2)), O);
-                self.ay[i].store(-GRAVITY * v_y * (1.0 / (r2 + 0.2)), O);
+                self.ax[i].store(-GRAVITY * v_x * (1.0 / (r2 + ANTI_BLACK_HOLE)), O);
+                self.ay[i].store(-GRAVITY * v_y * (1.0 / (r2 + ANTI_BLACK_HOLE)), O);
             } else {
                 self.ay[i].store(-GRAVITY, O);
             }
@@ -129,18 +124,18 @@ impl Particles {
         let correction_x = correction * normal_x;
         let correction_y = correction * normal_y;
 
-        self.x[i].fetch_add(correction_x * mass_ratio_2, O);
-        self.y[i].fetch_add(correction_y * mass_ratio_2, O);
-        self.x[j].fetch_sub(correction_x * mass_ratio_1, O);
-        self.y[j].fetch_sub(correction_y * mass_ratio_1, O);
+        self.x[i].store(xi + correction_x * mass_ratio_2, O);
+        self.y[i].store(yi + correction_y * mass_ratio_2, O);
+        self.x[j].store(xj - correction_x * mass_ratio_1, O);
+        self.y[j].store(yj - correction_y * mass_ratio_1, O);
     }
 
     pub fn verlet(&self, dt: f32) {
         for i in 0..self.count {
             let x = self.x[i].load(O);
             let y = self.y[i].load(O);
-            let vx = x - self.ox[i].load(O);
-            let vy = y - self.oy[i].load(O);
+            let vx = (x - self.ox[i].load(O)).clamp(-MAX_V, MAX_V);
+            let vy = (y - self.oy[i].load(O)).clamp(-MAX_V, MAX_V);
             self.ox[i].store(x, O);
             self.oy[i].store(y, O);
             self.x[i].store(x + vx + self.ax[i].load(O) * dt * dt, O);

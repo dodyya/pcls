@@ -1,16 +1,15 @@
-use crate::gridphx::Phx;
+use crate::phx::Phx;
 use crate::{gfx, particles::O};
 use pixels::{Pixels, SurfaceTexture};
 use std::time::{Duration, Instant};
 use winit::{
     dpi::PhysicalSize,
-    event::{Event, MouseButton, VirtualKeyCode},
+    event::{Event, MouseButton},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
 use rand::Rng;
-// use sweepphx::Phx;
 const MAX_PARTICLE_SIZE: f32 = 0.005;
 const PARTICLE_COUNT: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
@@ -40,16 +39,6 @@ impl Visualization {
                     self.sim.pcls.count,
                     1.0 / frame_time.as_secs_f64() as f64
                 ));
-                // let max_num_entries = self
-                //     .sim
-                //     .grid
-                //     .map
-                //     .data
-                //     .iter()
-                //     .map(|cell| cell.len())
-                //     .reduce(|acc, x| acc.max(x))
-                //     .unwrap_or(0) as f32;
-                // dbg!(max_num_entries);
             }
             ticker = ticker.wrapping_add(8);
 
@@ -73,7 +62,6 @@ impl Visualization {
                         for _ in 0..PARTICLE_COUNT {
                             let dx = rng.gen_range(-0.2..0.2);
                             let dy = rng.gen_range(-0.2..0.2);
-                            // let r = rng.gen_range(0.01..=MAX_PARTICLE_SIZE);
                             let r = MAX_PARTICLE_SIZE;
 
                             self.sim.add_particle(
