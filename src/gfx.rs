@@ -1,73 +1,3 @@
-use pixels::{Pixels, SurfaceTexture};
-use std::time::Instant;
-use winit::{
-    dpi::PhysicalSize,
-    event::{Event, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::{Window, WindowBuilder},
-};
-
-pub struct Gfx {
-    pub window: Window,
-    pixels: Pixels,
-    width: u32,
-    height: u32,
-}
-
-impl Gfx {
-    pub fn new(width: u32, height: u32) -> (Self, EventLoop<()>) {
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_title("graphics")
-            .with_inner_size(PhysicalSize::new(width, height))
-            .with_resizable(false)
-            .build(&event_loop)
-            .unwrap();
-
-        let size = window.inner_size();
-        let pixels = Pixels::new(
-            size.width,
-            size.height,
-            SurfaceTexture::new(size.width, size.height, &window),
-        )
-        .unwrap();
-
-        (
-            Gfx {
-                window,
-                pixels,
-                width: size.width,
-                height: size.height,
-            },
-            event_loop,
-        )
-    }
-
-    pub fn draw_particles(&mut self, particles: (&[f32], &[f32], &[f32])) {
-        particles
-            .0
-            .iter()
-            .zip(particles.1.iter())
-            .zip(particles.2.iter())
-            .for_each(|((x, y), r)| {
-                fill_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
-                draw_circle(self.pixels.frame_mut(), self.width, (*x, *y), *r);
-            });
-    }
-
-    pub fn clear_frame(&mut self) {
-        _rst(self.pixels.frame_mut());
-    }
-
-    pub fn render(&mut self) {
-        self.pixels.render().unwrap();
-    }
-
-    pub fn request_redraw(&mut self) {
-        self.window.request_redraw();
-    }
-}
-
 fn _draw_line(frame: &mut [u8], width: u32, start: (i32, i32), end: (i32, i32)) {
     let (mut x1, mut y1) = start;
     let (x2, y2) = end;
@@ -124,14 +54,14 @@ fn _draw_circle(frame: &mut [u8], width: u32, center: (i32, i32), radius: i32) {
             p = p + 2 * x - 2 * y + 1;
         }
 
-        _tpix(frame, width, (x + center.0, y + center.1));
-        _tpix(frame, width, (-x + center.0, y + center.1));
-        _tpix(frame, width, (x + center.0, -y + center.1));
-        _tpix(frame, width, (-x + center.0, -y + center.1));
-        _tpix(frame, width, (y + center.0, x + center.1));
-        _tpix(frame, width, (-y + center.0, x + center.1));
-        _tpix(frame, width, (y + center.0, -x + center.1));
-        _tpix(frame, width, (-y + center.0, -x + center.1));
+        _cpix(frame, width, (x + center.0, y + center.1));
+        _cpix(frame, width, (-x + center.0, y + center.1));
+        _cpix(frame, width, (x + center.0, -y + center.1));
+        _cpix(frame, width, (-x + center.0, -y + center.1));
+        _cpix(frame, width, (y + center.0, x + center.1));
+        _cpix(frame, width, (-y + center.0, x + center.1));
+        _cpix(frame, width, (y + center.0, -x + center.1));
+        _cpix(frame, width, (-y + center.0, -x + center.1));
     }
 }
 
@@ -190,19 +120,14 @@ fn _tpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
         } else {
             pixel.copy_from_slice(&[0, 0, 0, 255]);
         }
-    } else {
-        // println!("Tried to draw pixel at {:?}", (x, y))
     }
 }
 
 fn _cpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
-    if x > width as i32 {
-        println!("Tried to draw pixel at {:?}", (x, y));
-    }
+    if x > width as i32 {}
     let index = (y.wrapping_mul(width as i32).wrapping_add(x) as usize).wrapping_mul(4);
 
     if index.saturating_add(4) > frame.len() {
-        println!("Tried to draw pixel at {:?}", (x, y));
         return;
     }
     let pixel = &mut frame[index..index + 4];
@@ -242,7 +167,5 @@ fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
     pixels.copy_from_slice(&white);
 }
 pub fn _rst(frame: &mut [u8]) {
-    // let black = [0, 0, 0, 255].repeat(frame.len() / 4);
-    // frame.copy_from_slice(&black)
     frame.fill(0);
 }

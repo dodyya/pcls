@@ -6,23 +6,24 @@ use rand::Rng;
 use std::sync::Arc;
 use std::thread;
 
-const DT: f32 = 1.0 / 12.0;
-const SUBSTEPS: usize = 15;
+const DT: f32 = 1.0 / 60.0;
+const SUBSTEPS: usize = 12;
 const NUM_THREADS: usize = 8;
-const GRAVITY: f32 = 0.1;
+const GRAVITY: f32 = 1.0;
 const WASHING_MACHINE: bool = false;
-const RESTITUTION: f32 = 0.9;
+const RESTITUTION: f32 = 1.0;
 const ANTI_BLACK_HOLE: f32 = 0.5;
 const MAX_V: f32 = 0.01;
 const GRID_DEPTH: usize = 3;
+const VELOCITY_DAMPING: f32 = 0.99999999;
 
 #[derive(Debug)]
-pub struct Sim {
+pub struct Simulation {
     pub pcls: Arc<Particles>,
     pub grid: Arc<Grid>,
 }
 
-impl Sim {
+impl Simulation {
     pub fn new(cell_size: f32) -> Self {
         let grid = Grid::new(cell_size, GRID_DEPTH);
         Self {
@@ -208,8 +209,8 @@ impl Sim {
         for i in 0..p.count {
             let x = p.get_x(i);
             let y = p.get_y(i);
-            let vx = (x - p.get_ox(i)).clamp(-MAX_V, MAX_V);
-            let vy = (y - p.get_oy(i)).clamp(-MAX_V, MAX_V);
+            let vx = (x - p.get_ox(i)).clamp(-MAX_V, MAX_V) * VELOCITY_DAMPING;
+            let vy = (y - p.get_oy(i)).clamp(-MAX_V, MAX_V) * VELOCITY_DAMPING;
             p.set_ox(i, x);
             p.set_oy(i, y);
             p.set_x(i, x + vx + p.get_ax(i) * dt * dt);

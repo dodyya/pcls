@@ -1,5 +1,5 @@
 use crate::gfx;
-use crate::sim::Sim;
+use crate::sim::Simulation;
 use atomic_float::AtomicF32;
 use pixels::{Pixels, SurfaceTexture};
 use rand::rngs::ThreadRng;
@@ -21,7 +21,7 @@ const MASS: f32 = 1.0;
 pub struct Visualization {
     window: Window,
     pixels: Pixels,
-    sim: Sim,
+    sim: Simulation,
     event_loop: EventLoop<()>,
 }
 impl Visualization {
@@ -133,7 +133,7 @@ impl Visualization {
             SurfaceTexture::new(size.width, size.height, &window),
         )
         .unwrap();
-        let sim = Sim::new(MAX_PARTICLE_SIZE * 2.0);
+        let sim = Simulation::new(MAX_PARTICLE_SIZE * 2.0);
 
         Self {
             window,
@@ -152,11 +152,11 @@ fn display(frame: &mut [u8], particles: (&[AtomicF32], &[AtomicF32], &[AtomicF32
         .zip(particles.1.iter())
         .zip(particles.2.iter())
         .for_each(|((x, y), r)| {
-            gfx::fill_circle(frame, width, (x.load(O), y.load(O)), r.load(O) / 2.0);
+            gfx::draw_circle(frame, width, (x.load(O), y.load(O)), r.load(O));
         });
 }
 
-fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Sim, rng: &mut ThreadRng) {
+fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut ThreadRng) {
     let sim_x = (cursor_x / WINDOW_SIZE as f32) * 2.0 - 1.0;
     let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as f32) * 2.0;
 
