@@ -16,7 +16,7 @@ use winit::{
 const MAX_PARTICLE_SIZE: f32 = 1.0 / 256.0;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
-const MASS: f32 = 1.0;
+const PDENSITY: f32 = 1.0;
 
 pub struct Visualization {
     window: Window,
@@ -144,16 +144,11 @@ impl Visualization {
     }
 }
 
-fn display(frame: &mut [u8], particles: (&[AtomicF32], &[AtomicF32], &[AtomicF32]), width: u32) {
+fn display(frame: &mut [u8], particles: impl Iterator<Item = (f32, f32, f32)>, width: u32) {
     gfx::_rst(frame);
-    particles
-        .0
-        .iter()
-        .zip(particles.1.iter())
-        .zip(particles.2.iter())
-        .for_each(|((x, y), r)| {
-            gfx::draw_circle(frame, width, (x.load(O), y.load(O)), r.load(O));
-        });
+    particles.for_each(|(x, y, r)| {
+        gfx::draw_circle(frame, width, (x, y), r);
+    });
 }
 
 fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut ThreadRng) {
@@ -165,6 +160,6 @@ fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut T
         let dy = rng.gen_range(-0.2..0.2);
         let r = MAX_PARTICLE_SIZE;
 
-        sim.add_particle(sim_x + dx, sim_y + dy, r, 0.0, 0.0, MASS * r * r);
+        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, 0.0);
     }
 }

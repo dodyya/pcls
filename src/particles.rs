@@ -1,17 +1,38 @@
 use atomic_float::AtomicF32;
 use std::sync::atomic::Ordering::Relaxed as O;
 
-use rand::Rng;
+#[derive(Debug)]
+pub struct Particle {
+    x: AtomicF32,
+    y: AtomicF32,
+    ox: AtomicF32,
+    oy: AtomicF32,
+    ax: AtomicF32,
+    ay: AtomicF32,
+    r: AtomicF32,
+    m: AtomicF32,
+    charge: AtomicF32,
+}
+
+impl Particle {
+    pub fn new(x: f32, y: f32, r: f32, m: f32, charge: f32) -> Self {
+        Self {
+            x: AtomicF32::new(x),
+            y: AtomicF32::new(y),
+            ox: AtomicF32::new(x),
+            oy: AtomicF32::new(y),
+            ax: AtomicF32::new(0.0),
+            ay: AtomicF32::new(0.0),
+            r: AtomicF32::new(r),
+            m: AtomicF32::new(m),
+            charge: AtomicF32::new(charge),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Particles {
-    pub x: Vec<AtomicF32>,
-    pub y: Vec<AtomicF32>,
-    pub ox: Vec<AtomicF32>,
-    pub oy: Vec<AtomicF32>,
-    pub ax: Vec<AtomicF32>,
-    pub ay: Vec<AtomicF32>,
-    pub r: Vec<AtomicF32>,
-    pub m: Vec<AtomicF32>,
+    pub particles: Vec<Particle>,
     pub count: usize,
     pub g_toward_center: bool,
 }
@@ -19,98 +40,80 @@ pub struct Particles {
 impl Particles {
     pub fn new(capacity: usize) -> Self {
         Self {
-            x: Vec::with_capacity(capacity),
-            y: Vec::with_capacity(capacity),
-            ox: Vec::with_capacity(capacity),
-            oy: Vec::with_capacity(capacity),
-            ax: Vec::with_capacity(capacity),
-            ay: Vec::with_capacity(capacity),
-            r: Vec::with_capacity(capacity),
-            m: Vec::with_capacity(capacity),
+            particles: Vec::with_capacity(capacity),
             count: 0,
             g_toward_center: false,
         }
     }
 
-    pub fn add_10k(&mut self, x: f32, y: f32, r: f32, m: f32) {
+    pub fn add_10k(&mut self, x: f32, y: f32, r: f32, m: f32, charge: f32) {
+        self.particles.reserve(10_000);
         for _ in 0..10_000 {
-            self.x.push(AtomicF32::new(x));
-            self.y.push(AtomicF32::new(y));
-            self.r.push(AtomicF32::new(r));
-            self.ox.push(AtomicF32::new(x));
-            self.oy.push(AtomicF32::new(y));
-            self.ax.push(AtomicF32::new(0.0));
-            self.ay.push(AtomicF32::new(0.0));
-            self.m.push(AtomicF32::new(m));
+            self.particles.push(Particle::new(x, y, r, m, charge));
         }
         self.count += 10_000;
     }
 
     pub fn clear(&mut self) {
-        self.x = vec![];
-        self.y = vec![];
-        self.r = vec![];
-        self.ox = vec![];
-        self.oy = vec![];
-        self.m = vec![];
+        self.particles = vec![];
         self.count = 0;
     }
 
-    pub fn push(&mut self, particle: (f32, f32, f32, f32, f32, f32)) -> usize {
-        self.x.push(AtomicF32::new(particle.0));
-        self.y.push(AtomicF32::new(particle.1));
-        self.r.push(AtomicF32::new(particle.2));
-        self.ox.push(AtomicF32::new(particle.0));
-        self.oy.push(AtomicF32::new(particle.1));
-        self.ax.push(AtomicF32::new(0.0));
-        self.ay.push(AtomicF32::new(0.0));
-        self.m.push(AtomicF32::new(particle.5));
-
+    pub fn push(&mut self, particle: (f32, f32, f32, f32, f32)) -> usize {
+        self.particles.push(Particle::new(
+            particle.0, particle.1, particle.2, particle.3, particle.4,
+        ));
         self.count += 1;
         self.count - 1
     }
 
     pub fn get_x(&self, i: usize) -> f32 {
-        self.x[i].load(O)
+        self.particles[i].x.load(O)
     }
     pub fn get_y(&self, i: usize) -> f32 {
-        self.y[i].load(O)
+        self.particles[i].y.load(O)
     }
     pub fn get_ox(&self, i: usize) -> f32 {
-        self.ox[i].load(O)
+        self.particles[i].ox.load(O)
     }
     pub fn get_oy(&self, i: usize) -> f32 {
-        self.oy[i].load(O)
+        self.particles[i].oy.load(O)
     }
     pub fn get_ax(&self, i: usize) -> f32 {
-        self.ax[i].load(O)
+        self.particles[i].ax.load(O)
     }
     pub fn get_ay(&self, i: usize) -> f32 {
-        self.ay[i].load(O)
+        self.particles[i].ay.load(O)
     }
     pub fn get_r(&self, i: usize) -> f32 {
-        self.r[i].load(O)
+        self.particles[i].r.load(O)
     }
     pub fn get_m(&self, i: usize) -> f32 {
-        self.m[i].load(O)
+        self.particles[i].m.load(O)
     }
 
     pub fn set_x(&self, i: usize, data: f32) {
-        self.x[i].store(data, O)
+        self.particles[i].x.store(data, O)
     }
     pub fn set_y(&self, i: usize, data: f32) {
-        self.y[i].store(data, O)
+        self.particles[i].y.store(data, O)
     }
     pub fn set_ox(&self, i: usize, data: f32) {
-        self.ox[i].store(data, O)
+        self.particles[i].ox.store(data, O)
     }
     pub fn set_oy(&self, i: usize, data: f32) {
-        self.oy[i].store(data, O)
+        self.particles[i].oy.store(data, O)
     }
     pub fn set_ax(&self, i: usize, data: f32) {
-        self.ax[i].store(data, O)
+        self.particles[i].ax.store(data, O)
     }
     pub fn set_ay(&self, i: usize, data: f32) {
-        self.ay[i].store(data, O)
+        self.particles[i].ay.store(data, O)
+    }
+
+    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32)> + '_ {
+        self.particles
+            .iter()
+            .map(|p| (p.x.load(O), p.y.load(O), p.r.load(O)))
     }
 }
