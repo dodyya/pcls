@@ -11,7 +11,7 @@ pub struct Particle {
     ay: AtomicF32,
     r: AtomicF32,
     m: AtomicF32,
-    charge: AtomicF32,
+    // charge: AtomicF32,
 }
 
 impl Particle {
@@ -25,7 +25,7 @@ impl Particle {
             ay: AtomicF32::new(0.0),
             r: AtomicF32::new(r),
             m: AtomicF32::new(m),
-            charge: AtomicF32::new(charge),
+            // charge: AtomicF32::new(charge),
         }
     }
 }
