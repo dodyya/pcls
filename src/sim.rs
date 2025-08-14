@@ -1,7 +1,6 @@
 use crate::grid::Grid;
 use crate::maybe_id::MaybeID;
 use crate::particles::Particles;
-use atomic_float::AtomicF32;
 use rand::Rng;
 use std::sync::Arc;
 use std::thread;
@@ -31,7 +30,7 @@ impl Simulation {
             grid: Arc::new(grid),
         }
     }
-
+    #[inline(never)]
     pub fn step(&mut self) {
         for _ in 0..SUBSTEPS {
             Self::apply_gravity(&self.pcls);
@@ -42,6 +41,7 @@ impl Simulation {
         }
     }
 
+    #[inline(never)]
     pub fn resolve_overlaps(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {
         let c = grid.cell_count;
         if c % n_threads != 0 {
@@ -73,6 +73,7 @@ impl Simulation {
         });
     }
 
+    #[inline(never)]
     fn overlap_chunk(
         x_range: std::ops::Range<usize>,
         c: usize,
@@ -85,6 +86,9 @@ impl Simulation {
             for j in (0..c).rev() {
                 let inner_ids = &grid_ref.map[(i, j)];
                 outer.clear();
+                if i > 0 && j < c - 1 {
+                    outer.push(&grid_ref.map[(i - 1, j + 1)]);
+                }
                 if i < c - 1 {
                     outer.push(&grid_ref.map[(i + 1, j)]);
                 }
@@ -93,9 +97,6 @@ impl Simulation {
                 }
                 if i < c - 1 && j < c - 1 {
                     outer.push(&grid_ref.map[(i + 1, j + 1)]);
-                }
-                if i > 0 && j < c - 1 {
-                    outer.push(&grid_ref.map[(i - 1, j + 1)]);
                 }
 
                 for (num, in_id) in inner_ids.iter().enumerate() {
@@ -128,30 +129,31 @@ impl Simulation {
         }
     }
 
-    pub fn get_drawable(&self) -> (&[AtomicF32], &[AtomicF32], &[AtomicF32]) {
-        (
-            self.pcls.x.as_ref(),
-            self.pcls.y.as_ref(),
-            self.pcls.r.as_ref(),
-        )
+    #[inline(never)]
+    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32)> + '_ {
+        self.pcls.get_drawable()
     }
 
-    pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, vx: f32, vy: f32, mass: f32) {
+    #[inline(never)]
+    pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, mass: f32, charge: f32) {
         let index = Arc::get_mut(&mut self.pcls)
             .unwrap()
-            .push((x, y, radius, vx, vy, mass));
+            .push((x, y, radius, mass, charge));
         self.grid.try_insert(index, x, y);
     }
 
+    #[inline(never)]
     pub fn clear(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().clear();
         self.grid.map.clear();
     }
+    #[inline(never)]
     pub fn toggle_gravity(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
     }
 
-    pub fn apply_gravity(p: &Particles) {
+    #[inline(never)]
+    fn apply_gravity(p: &Particles) {
         for i in 0..p.count {
             if p.g_toward_center {
                 let x = p.get_x(i);
@@ -167,7 +169,11 @@ impl Simulation {
         }
     }
 
-    pub fn overlap(p: &Particles, i: usize, j: usize) {
+    #[inline(never)]
+    pub fn apply_coulomb(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {}
+
+    #[inline(never)]
+    fn overlap(p: &Particles, i: usize, j: usize) {
         let xi = p.get_x(i);
         let xj = p.get_x(j);
         let yi = p.get_y(i);
@@ -205,6 +211,7 @@ impl Simulation {
         p.set_y(j, yj - correction_y * mass_ratio_1);
     }
 
+    #[inline(never)]
     pub fn verlet(p: &Particles, dt: f32) {
         for i in 0..p.count {
             let x = p.get_x(i);
@@ -220,6 +227,7 @@ impl Simulation {
         }
     }
 
+    #[inline(never)]
     pub fn constrain(p: &Particles) {
         for i in 0..p.count {
             let x = p.get_x(i);
@@ -251,6 +259,7 @@ impl Simulation {
         }
     }
 
+    #[inline(never)]
     pub fn stop(&mut self) {
         for i in 0..self.pcls.count {
             self.pcls.set_ox(i, self.pcls.get_x(i));
