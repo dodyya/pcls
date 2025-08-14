@@ -30,7 +30,6 @@ impl Simulation {
             grid: Arc::new(grid),
         }
     }
-    #[inline(never)]
     pub fn step(&mut self) {
         for _ in 0..SUBSTEPS {
             Self::apply_gravity(&self.pcls);
@@ -41,7 +40,6 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
     pub fn resolve_overlaps(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {
         let c = grid.cell_count;
         if c % n_threads != 0 {
@@ -73,7 +71,6 @@ impl Simulation {
         });
     }
 
-    #[inline(never)]
     fn overlap_chunk(
         x_range: std::ops::Range<usize>,
         c: usize,
@@ -129,12 +126,10 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
     pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32)> + '_ {
         self.pcls.get_drawable()
     }
 
-    #[inline(never)]
     pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, mass: f32, charge: f32) {
         let index = Arc::get_mut(&mut self.pcls)
             .unwrap()
@@ -142,17 +137,14 @@ impl Simulation {
         self.grid.try_insert(index, x, y);
     }
 
-    #[inline(never)]
     pub fn clear(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().clear();
         self.grid.map.clear();
     }
-    #[inline(never)]
     pub fn toggle_gravity(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
     }
 
-    #[inline(never)]
     fn apply_gravity(p: &Particles) {
         for i in 0..p.count {
             if p.g_toward_center {
@@ -169,10 +161,9 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
-    pub fn apply_coulomb(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {}
+    // #[inline(never)]
+    // pub fn apply_coulomb(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {}
 
-    #[inline(never)]
     fn overlap(p: &Particles, i: usize, j: usize) {
         let xi = p.get_x(i);
         let xj = p.get_x(j);
@@ -211,7 +202,6 @@ impl Simulation {
         p.set_y(j, yj - correction_y * mass_ratio_1);
     }
 
-    #[inline(never)]
     pub fn verlet(p: &Particles, dt: f32) {
         for i in 0..p.count {
             let x = p.get_x(i);
@@ -227,7 +217,6 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
     pub fn constrain(p: &Particles) {
         for i in 0..p.count {
             let x = p.get_x(i);
@@ -259,7 +248,6 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
     pub fn stop(&mut self) {
         for i in 0..self.pcls.count {
             self.pcls.set_ox(i, self.pcls.get_x(i));
