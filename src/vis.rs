@@ -1,10 +1,8 @@
 use crate::gfx;
 use crate::sim::Simulation;
-use atomic_float::AtomicF32;
 use pixels::{Pixels, SurfaceTexture};
 use rand::rngs::ThreadRng;
 use rand::Rng;
-use std::sync::atomic::Ordering::Relaxed as O;
 use std::time::{Duration, Instant};
 use winit::{
     dpi::PhysicalSize,
@@ -13,7 +11,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-const MAX_PARTICLE_SIZE: f32 = 1.0 / 256.0;
+const MAX_PARTICLE_SIZE: f32 = 1.0 / 128.0;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
 const PDENSITY: f32 = 1.0;
@@ -59,6 +57,9 @@ impl Visualization {
                         && (0.0..=WINDOW_SIZE as f32).contains(&cursor_y)
                     {
                         add_particles(cursor_x, cursor_y, &mut self.sim, &mut rng);
+                        // if PARTICLES_ON_CLICK == 1 {
+                        mouse_down = false;
+                        // }
                     }
                 }
             }
@@ -144,10 +145,14 @@ impl Visualization {
     }
 }
 
-fn display(frame: &mut [u8], particles: impl Iterator<Item = (f32, f32, f32)>, width: u32) {
+fn display(frame: &mut [u8], particles: impl Iterator<Item = (f32, f32, f32, f32)>, width: u32) {
     gfx::_rst(frame);
-    particles.for_each(|(x, y, r)| {
-        gfx::draw_circle(frame, width, (x, y), r);
+    particles.for_each(|(x, y, r, c)| {
+        if c < 0.0 {
+            gfx::draw_circle(frame, width, (x, y), r);
+        } else {
+            gfx::fill_circle(frame, width, (x, y), r);
+        }
     });
 }
 
@@ -160,6 +165,9 @@ fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut T
         let dy = rng.gen_range(-0.2..0.2);
         let r = MAX_PARTICLE_SIZE;
 
-        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, 0.0);
+        // let charge = if dx > 0.0 && dy > 0.0 { -1.0 } else { 1.0 };
+        let charge = -1.0;
+        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, charge);
+        // sim.add_particle(sim_x - dx, sim_y - dy, r, PDENSITY * r * r, 1.0);
     }
 }

@@ -16,11 +16,8 @@ impl MaybeID {
         !self.some.load(O)
     }
 
-    pub fn id(&self) -> Option<usize> {
-        match self.some.load(O) {
-            true => Some(self.id.load(O)),
-            false => None,
-        }
+    pub fn unchecked_id(&self) -> usize {
+        self.id.load(O)
     }
 
     pub fn set(&self, val: usize) {
