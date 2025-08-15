@@ -16,8 +16,9 @@ const RESTITUTION: f32 = 1.0; // How hard particles bounce off each other, 0.0-1
 const MAX_V: f32 = 0.01; // Maximum velocity restriction
 const GRID_DEPTH: usize = 3; // Max. particles per grid cell to process. 3 is reasonable lower limit
 const VELOCITY_DAMPING: f32 = 0.999999; // Velocity damping per Verlet step
-const K: f32 = 0.00000005;
-const MAGNETIC_GRID_SIZE: i32 = 3;
+const K: f32 = 0.00000005; //Coulomb's constant
+const COULOMB_RADIUS: i32 = 3; //Grid "radius" for Coulomb
+const EPSILON: f32 = 0.01; //Coulomb minimum distance
 
 #[derive(Debug)]
 pub struct Simulation {
@@ -86,7 +87,7 @@ impl Simulation {
     }
 
     #[inline(always)]
-    fn magnetic_neighbors<'a>(
+    fn coulomb_neighbors<'a>(
         out: &mut Vec<&'a [MaybeID]>,
         grid: &'a Grid,
         i: usize,
@@ -94,8 +95,8 @@ impl Simulation {
         c: usize,
     ) {
         out.clear();
-        for di in -MAGNETIC_GRID_SIZE..=MAGNETIC_GRID_SIZE {
-            for dj in -MAGNETIC_GRID_SIZE..=MAGNETIC_GRID_SIZE {
+        for di in -COULOMB_RADIUS..=COULOMB_RADIUS {
+            for dj in -COULOMB_RADIUS..=COULOMB_RADIUS {
                 if di == 0 && dj == 0 {
                     continue;
                 }
@@ -157,7 +158,7 @@ impl Simulation {
         for i in x_range {
             for j in (0..c).rev() {
                 let inner = &grid.map[(i, j)];
-                Self::magnetic_neighbors(&mut magnetic_neigh, grid, i, j, c);
+                Self::coulomb_neighbors(&mut magnetic_neigh, grid, i, j, c);
 
                 for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
                     let in_val = in_id.unchecked_id();
@@ -285,7 +286,7 @@ impl Simulation {
         let dy = yi - yj;
         let distance_sq = dx * dx + dy * dy;
         let force = K * ci * cj / (distance_sq);
-        let distance = distance_sq.sqrt();
+        let distance = distance_sq.sqrt().max(EPSILON);
 
         let fx = force * dx / distance;
         let fy = force * dy / distance;
