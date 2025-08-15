@@ -91,6 +91,9 @@ impl Particles {
     pub fn get_m(&self, i: usize) -> f32 {
         self.particles[i].m.load(O)
     }
+    pub fn get_c(&self, i: usize) -> f32 {
+        self.particles[i].charge.load(O)
+    }
 
     pub fn set_x(&self, i: usize, data: f32) {
         self.particles[i].x.store(data, O)
@@ -111,9 +114,9 @@ impl Particles {
         self.particles[i].ay.store(data, O)
     }
 
-    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32)> + '_ {
+    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32, f32)> + '_ {
         self.particles
             .iter()
-            .map(|p| (p.x.load(O), p.y.load(O), p.r.load(O)))
+            .map(|p| (p.x.load(O), p.y.load(O), p.r.load(O), p.charge.load(O)))
     }
 }

@@ -1,20 +1,23 @@
 use crate::grid::Grid;
 use crate::maybe_id::MaybeID;
-use crate::particles::Particles;
+use crate::particles::{Particle, Particles};
 use rand::Rng;
+use std::ops::Range;
 use std::sync::Arc;
 use std::thread;
 
 const DT: f32 = 1.0 / 60.0;
-const SUBSTEPS: usize = 12;
-const NUM_THREADS: usize = 8;
+const SUBSTEPS: usize = 12; // Substeps per step() call.
+const NUM_THREADS: usize = 8; // Threads used in resolve_overlaps
 const GRAVITY: f32 = 1.0;
-const WASHING_MACHINE: bool = false;
-const RESTITUTION: f32 = 1.0;
-const ANTI_BLACK_HOLE: f32 = 0.5;
-const MAX_V: f32 = 0.01;
-const GRID_DEPTH: usize = 3;
-const VELOCITY_DAMPING: f32 = 0.99999999;
+const DONUT: bool = true; // True is a "donut" constraint, false is a rectangle
+const ANTI_BHOLE: f32 = 0.5; // Avoid black holes at center in donut mode
+const RESTITUTION: f32 = 1.0; // How hard particles bounce off each other, 0.0-1.0
+const MAX_V: f32 = 0.01; // Maximum velocity restriction
+const GRID_DEPTH: usize = 3; // Max. particles per grid cell to process. 3 is reasonable lower limit
+const VELOCITY_DAMPING: f32 = 0.999999; // Velocity damping per Verlet step
+const K: f32 = 0.00000005;
+const MAGNETIC_GRID_SIZE: i32 = 3;
 
 #[derive(Debug)]
 pub struct Simulation {
@@ -30,10 +33,11 @@ impl Simulation {
             grid: Arc::new(grid),
         }
     }
-    #[inline(never)]
+    #[inline(always)]
     pub fn step(&mut self) {
         for _ in 0..SUBSTEPS {
             Self::apply_gravity(&self.pcls);
+            Self::apply_coulomb(&self.grid, &self.pcls, NUM_THREADS);
             Self::constrain(&self.pcls);
             self.grid.update(&self.pcls);
             Self::resolve_overlaps(&self.grid, &self.pcls, NUM_THREADS);
@@ -41,100 +45,143 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn resolve_overlaps(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {
         let c = grid.cell_count;
         if c % n_threads != 0 {
             panic!("Cells to a side is not divisible by number of threads");
         }
 
+        let thread_width = c / n_threads;
         thread::scope(|s| {
-            let thread_width = c / n_threads;
             for n in 0..n_threads {
-                let arc_grid = Arc::clone(grid);
-                let arc_pcls = Arc::clone(pcls);
-                s.spawn(move || {
-                    let range = n * thread_width..n * thread_width + thread_width / 2;
-                    Self::overlap_chunk(range, c, arc_grid, arc_pcls)
-                });
+                let range = n * thread_width..n * thread_width + thread_width / 2;
+                s.spawn(move || Self::overlap_chunk(range, c, Arc::clone(grid), Arc::clone(pcls)));
             }
         });
 
         thread::scope(|s| {
-            let thread_width = c / n_threads;
             for n in 0..n_threads {
-                let arc_grid = Arc::clone(grid);
-                let arc_pcls = Arc::clone(pcls);
-                s.spawn(move || {
-                    let range = n * thread_width + thread_width / 2..(n + 1) * thread_width;
-                    Self::overlap_chunk(range, c, arc_grid, arc_pcls)
-                });
+                let range = n * thread_width + thread_width / 2..(n + 1) * thread_width;
+                s.spawn(move || Self::overlap_chunk(range, c, Arc::clone(grid), Arc::clone(pcls)));
             }
         });
     }
 
-    #[inline(never)]
+    #[inline(always)]
+    fn neighbors<'a>(out: &mut Vec<&'a [MaybeID]>, grid: &'a Grid, i: usize, j: usize, c: usize) {
+        out.clear();
+        if i > 0 && j + 1 < c {
+            out.push(&grid.map[(i - 1, j + 1)]);
+        }
+        if i + 1 < c {
+            out.push(&grid.map[(i + 1, j)]);
+        }
+        if j + 1 < c {
+            out.push(&grid.map[(i, j + 1)]);
+        }
+        if i + 1 < c && j + 1 < c {
+            out.push(&grid.map[(i + 1, j + 1)]);
+        }
+    }
+
+    #[inline(always)]
+    fn magnetic_neighbors<'a>(
+        out: &mut Vec<&'a [MaybeID]>,
+        grid: &'a Grid,
+        i: usize,
+        j: usize,
+        c: usize,
+    ) {
+        out.clear();
+        for di in -MAGNETIC_GRID_SIZE..=MAGNETIC_GRID_SIZE {
+            for dj in -MAGNETIC_GRID_SIZE..=MAGNETIC_GRID_SIZE {
+                if di == 0 && dj == 0 {
+                    continue;
+                }
+                let ni = i as i32 + di;
+                let nj = j as i32 + dj;
+                if ni >= 0 && ni < c as i32 && nj >= 0 && nj < c as i32 {
+                    out.push(&grid.map[(ni as usize, nj as usize)]);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
     fn overlap_chunk(
-        x_range: std::ops::Range<usize>,
+        x_range: Range<usize>,
         c: usize,
         arc_grid: Arc<Grid>,
         arc_pcls: Arc<Particles>,
     ) {
-        let grid_ref = arc_grid.as_ref();
-        let mut outer: Vec<&[MaybeID]> = Vec::with_capacity(4);
+        let grid = arc_grid.as_ref();
+        let pcls = arc_pcls.as_ref();
+
+        let mut neigh: Vec<&[MaybeID]> = Vec::with_capacity(4);
+
         for i in x_range {
             for j in (0..c).rev() {
-                let inner_ids = &grid_ref.map[(i, j)];
-                outer.clear();
-                if i > 0 && j < c - 1 {
-                    outer.push(&grid_ref.map[(i - 1, j + 1)]);
-                }
-                if i < c - 1 {
-                    outer.push(&grid_ref.map[(i + 1, j)]);
-                }
-                if j < c - 1 {
-                    outer.push(&grid_ref.map[(i, j + 1)]);
-                }
-                if i < c - 1 && j < c - 1 {
-                    outer.push(&grid_ref.map[(i + 1, j + 1)]);
-                }
+                let inner = &grid.map[(i, j)];
+                Self::neighbors(&mut neigh, grid, i, j, c);
 
-                for (num, in_id) in inner_ids.iter().enumerate() {
-                    if in_id.is_none() {
-                        break;
-                    }
-                    for &out_ids in &outer {
-                        for out_id in out_ids {
-                            if out_id.is_none() {
-                                break;
-                            }
-                            let (in_val, out_val) = (in_id.id().unwrap(), out_id.id().unwrap());
-                            if in_val != out_val {
-                                Self::overlap(arc_pcls.as_ref(), in_val, out_val);
-                            }
+                for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
+                    let in_val = in_id.unchecked_id();
+
+                    for ids in &neigh {
+                        for out_id in (*ids).iter().take_while(|x| x.is_some()) {
+                            Self::overlap(pcls, in_val, out_id.unchecked_id());
                         }
                     }
 
-                    for other_id in inner_ids.iter().skip(num) {
-                        if other_id.is_none() {
-                            break;
-                        }
-                        let (in_val, out_val) = (in_id.id().unwrap(), other_id.id().unwrap());
-                        if in_val != out_val {
-                            Self::overlap(arc_pcls.as_ref(), in_val, out_val);
-                        }
+                    for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
+                        Self::overlap(pcls, in_val, other_id.unchecked_id());
                     }
                 }
             }
         }
     }
 
-    #[inline(never)]
-    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32)> + '_ {
+    #[inline(always)]
+    fn coulomb_chunk(
+        x_range: Range<usize>,
+        c: usize,
+        arc_grid: Arc<Grid>,
+        arc_pcls: Arc<Particles>,
+    ) {
+        let grid = arc_grid.as_ref();
+        let pcls = arc_pcls.as_ref();
+
+        let mut magnetic_neigh: Vec<&[MaybeID]> = Vec::with_capacity(24);
+
+        for i in x_range {
+            for j in (0..c).rev() {
+                let inner = &grid.map[(i, j)];
+                Self::magnetic_neighbors(&mut magnetic_neigh, grid, i, j, c);
+
+                for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
+                    let in_val = in_id.unchecked_id();
+
+                    for ids in &magnetic_neigh {
+                        for out_id in (*ids).iter().take_while(|x| x.is_some()) {
+                            Self::coulomb(pcls, in_val, out_id.unchecked_id());
+                        }
+                    }
+
+                    for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
+                        Self::coulomb(pcls, in_val, other_id.unchecked_id());
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32, f32)> + '_ {
         self.pcls.get_drawable()
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, mass: f32, charge: f32) {
         let index = Arc::get_mut(&mut self.pcls)
             .unwrap()
@@ -142,17 +189,18 @@ impl Simulation {
         self.grid.try_insert(index, x, y);
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn clear(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().clear();
         self.grid.map.clear();
     }
-    #[inline(never)]
+
+    #[inline(always)]
     pub fn toggle_gravity(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn apply_gravity(p: &Particles) {
         for i in 0..p.count {
             if p.g_toward_center {
@@ -161,28 +209,41 @@ impl Simulation {
                 let r2 = x.abs().powi(2) + y.abs().powi(2);
                 let v_x = x / (r2.sqrt());
                 let v_y = y / (r2.sqrt());
-                p.set_ax(i, -GRAVITY * v_x * (1.0 / (r2 + ANTI_BLACK_HOLE)));
-                p.set_ay(i, -GRAVITY * v_y * (1.0 / (r2 + ANTI_BLACK_HOLE)));
+                p.set_ax(i, -GRAVITY * v_x * (1.0 / (r2 + ANTI_BHOLE)));
+                p.set_ay(i, -GRAVITY * v_y * (1.0 / (r2 + ANTI_BHOLE)));
             } else {
                 p.set_ay(i, -GRAVITY);
             }
         }
     }
 
-    #[inline(never)]
-    pub fn apply_coulomb(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {}
+    #[inline(always)]
+    pub fn apply_coulomb(grid: &Arc<Grid>, pcls: &Arc<Particles>, n_threads: usize) {
+        let c = grid.cell_count;
+        if c % n_threads != 0 {
+            panic!("Cells to a side is not divisible by number of threads");
+        }
 
-    #[inline(never)]
+        let thread_width = c / n_threads;
+        thread::scope(|s| {
+            for n in 0..n_threads {
+                let range = n * thread_width..n * thread_width + thread_width;
+                s.spawn(move || Self::coulomb_chunk(range, c, Arc::clone(grid), Arc::clone(pcls)));
+            }
+        });
+    }
+
+    #[inline(always)]
     fn overlap(p: &Particles, i: usize, j: usize) {
         let xi = p.get_x(i);
-        let xj = p.get_x(j);
         let yi = p.get_y(i);
+        let ri = p.get_r(i);
+        let xj = p.get_x(j);
         let yj = p.get_y(j);
+        let rj = p.get_r(j);
         let dx = xi - xj;
         let dy = yi - yj;
         let distance_sq = dx * dx + dy * dy;
-        let ri = p.get_r(i);
-        let rj = p.get_r(j);
         if distance_sq > (ri + rj) * (ri + rj) {
             return;
         }
@@ -211,7 +272,31 @@ impl Simulation {
         p.set_y(j, yj - correction_y * mass_ratio_1);
     }
 
-    #[inline(never)]
+    fn coulomb(p: &Particles, i: usize, j: usize) {
+        let xi = p.get_x(i);
+        let yi = p.get_y(i);
+        let ci = p.get_c(i);
+        let mi = p.get_m(i);
+        let xj = p.get_x(j);
+        let yj = p.get_y(j);
+        let cj = p.get_c(j);
+        let mj = p.get_m(j);
+        let dx = xi - xj;
+        let dy = yi - yj;
+        let distance_sq = dx * dx + dy * dy;
+        let force = K * ci * cj / (distance_sq);
+        let distance = distance_sq.sqrt();
+
+        let fx = force * dx / distance;
+        let fy = force * dy / distance;
+
+        p.set_ax(i, p.get_ax(i) + fx / mi);
+        p.set_ay(i, p.get_ay(i) + fy / mi);
+        p.set_ax(j, p.get_ax(j) - fx / mj);
+        p.set_ay(j, p.get_ay(j) - fy / mj);
+    }
+
+    #[inline(always)]
     pub fn verlet(p: &Particles, dt: f32) {
         for i in 0..p.count {
             let x = p.get_x(i);
@@ -227,13 +312,13 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn constrain(p: &Particles) {
         for i in 0..p.count {
             let x = p.get_x(i);
             let y = p.get_y(i);
             let r = p.get_r(i);
-            if WASHING_MACHINE {
+            if DONUT {
                 let center_dist = (x * x + y * y).sqrt();
                 let factor = if center_dist + r > 1.0 {
                     (1.0 - r) / center_dist
@@ -259,7 +344,7 @@ impl Simulation {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn stop(&mut self) {
         for i in 0..self.pcls.count {
             self.pcls.set_ox(i, self.pcls.get_x(i));
