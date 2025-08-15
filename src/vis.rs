@@ -11,7 +11,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-const MAX_PARTICLE_SIZE: f32 = 1.0 / 128.0;
+const MAX_PARTICLE_SIZE: f32 = 1.0 / 256.0;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
 const PDENSITY: f32 = 1.0;
@@ -58,7 +58,7 @@ impl Visualization {
                     {
                         add_particles(cursor_x, cursor_y, &mut self.sim, &mut rng);
                         // if PARTICLES_ON_CLICK == 1 {
-                        mouse_down = false;
+                        // mouse_down = false;
                         // }
                     }
                 }
@@ -165,8 +165,8 @@ fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut T
         let dy = rng.gen_range(-0.2..0.2);
         let r = MAX_PARTICLE_SIZE;
 
-        // let charge = if dx > 0.0 && dy > 0.0 { -1.0 } else { 1.0 };
-        let charge = -1.0;
+        let charge = if dx > 0.0 && dy > 0.0 { -1.0 } else { 1.0 };
+        // let charge = -1.0;
         sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, charge);
         // sim.add_particle(sim_x - dx, sim_y - dy, r, PDENSITY * r * r, 1.0);
     }
