@@ -45,6 +45,7 @@ impl Visualization {
                 self.pixels.frame_mut(),
                 self.sim.get_drawable(),
                 WINDOW_SIZE,
+                self.sim.is_coulomb_enabled(),
             );
             _ = self.pixels.render();
 
@@ -57,9 +58,6 @@ impl Visualization {
                         && (0.0..=WINDOW_SIZE as f32).contains(&cursor_y)
                     {
                         add_particles(cursor_x, cursor_y, &mut self.sim, &mut rng);
-                        // if PARTICLES_ON_CLICK == 1 {
-                        // mouse_down = false;
-                        // }
                     }
                 }
             }
@@ -104,8 +102,17 @@ impl Visualization {
                         winit::event::VirtualKeyCode::Space => {
                             self.sim.toggle_gravity();
                         }
+                        winit::event::VirtualKeyCode::M => {
+                            self.sim.toggle_coulomb();
+                        }
+                        winit::event::VirtualKeyCode::D => {
+                            self.sim.toggle_donut();
+                        }
                         winit::event::VirtualKeyCode::S => {
                             self.sim.stop();
+                        }
+                        winit::event::VirtualKeyCode::P => {
+                            output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
                         }
                         _ => {}
                     },
@@ -115,7 +122,6 @@ impl Visualization {
             }
         });
     }
-
     pub fn new() -> Self {
         let width = WINDOW_SIZE;
         let height = WINDOW_SIZE;
@@ -145,14 +151,24 @@ impl Visualization {
     }
 }
 
-fn display(frame: &mut [u8], particles: impl Iterator<Item = (f32, f32, f32, f32)>, width: u32) {
+fn display(
+    frame: &mut [u8],
+    particles: impl Iterator<Item = (f32, f32, f32, f32)>,
+    width: u32,
+    coulomb_enabled: bool,
+) {
     gfx::_rst(frame);
     particles.for_each(|(x, y, r, c)| {
-        if c < 0.0 {
-            gfx::draw_circle(frame, width, (x, y), r);
+        let color_index = if coulomb_enabled {
+            if c > 0.0 {
+                0
+            } else {
+                1
+            } // Red for positive, Blue for negative
         } else {
-            gfx::fill_circle(frame, width, (x, y), r);
-        }
+            2 // White when magnetism is off
+        };
+        gfx::color_circle(frame, width, (x, y), r, color_index);
     });
 }
 
@@ -165,9 +181,22 @@ fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut T
         let dy = rng.gen_range(-0.2..0.2);
         let r = MAX_PARTICLE_SIZE;
 
-        let charge = if dx > 0.0 && dy > 0.0 { -1.0 } else { 1.0 };
+        let charge = if dx > 0.0 && dy > 0.0 { 1.0 } else { -1.0 };
         // let charge = -1.0;
         sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, charge);
         // sim.add_particle(sim_x - dx, sim_y - dy, r, PDENSITY * r * r, 1.0);
     }
+}
+
+fn output_frame(width: u32, height: u32, pixel_data: &[u8]) {
+    // if pixel_data.iter().any(|&p| p != 0) {
+    //     println!("non-uninit buffer!");
+    // }
+    use std::io::{self, BufWriter, Write};
+
+    let mut output = BufWriter::new(io::stdout());
+    output.write_all(&width.to_be_bytes()).unwrap();
+    output.write_all(&height.to_be_bytes()).unwrap();
+    output.write_all(pixel_data).unwrap();
+    output.flush().unwrap();
 }
