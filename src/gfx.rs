@@ -135,6 +135,10 @@ fn _cpix(frame: &mut [u8], width: u32, (x, y): (i32, i32)) {
 }
 
 fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
+    _color_crow(frame, width, (x1, x2, y), [255, 255, 255, 255]);
+}
+
+fn _color_crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32), color: [u8; 4]) {
     if x1 > x2
         || y < 0
         || x2 < 0
@@ -147,25 +151,48 @@ fn _crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32)) {
     let x1 = x1.max(0);
     let x2 = x2.min(width as i32 - 1);
 
-    let start_index = (y as usize * width as usize + x1 as usize) * 4;
-    let end_index = (y as usize * width as usize + x2 as usize) * 4 + 4;
-    let len = frame.len();
-
-    if start_index >= len {
-        return;
+    for x in x1..=x2 {
+        let index = (y as usize * width as usize + x as usize) * 4;
+        if index + 4 <= frame.len() {
+            frame[index..index + 4].copy_from_slice(&color);
+        }
     }
-
-    if end_index > len {
-        let pixels = &mut frame[start_index..len];
-        let white = vec![255; len - start_index];
-        pixels.copy_from_slice(&white);
-        return;
-    }
-
-    let pixels = &mut frame[start_index..end_index];
-    let white = vec![255; end_index - start_index];
-    pixels.copy_from_slice(&white);
 }
 pub fn _rst(frame: &mut [u8]) {
     frame.fill(0);
+}
+
+// Color palette: [R, G, B, A]
+const PALETTE: [[u8; 4]; 3] = [
+    [255, 0, 0, 255],   // Index 0: Red (positive charge)
+    [0, 0, 255, 255],   // Index 1: Blue (negative charge)  
+    [255, 255, 255, 255], // Index 2: White (magnetism off)
+];
+
+pub fn color_circle(frame: &mut [u8], width: u32, center: (f32, f32), radius: f32, color_index: u8) {
+    let pixel_center = ndc_to_pix(width, width, center);
+    let pixel_radius = (radius * width as f32 / 2.0).round() as i32;
+    let color = PALETTE[color_index as usize % PALETTE.len()];
+    _color_fill_circle(frame, width, pixel_center, pixel_radius, color);
+}
+
+fn _color_fill_circle(frame: &mut [u8], width: u32, center: (i32, i32), radius: i32, color: [u8; 4]) {
+    let mut x = 0;
+    let mut y = radius;
+    let mut p = 1 - radius;
+
+    while x <= y {
+        _color_crow(frame, width, (-x + center.0, x + center.0, y + center.1), color);
+        _color_crow(frame, width, (-x + center.0, x + center.0, -y + center.1), color);
+        _color_crow(frame, width, (-y + center.0, y + center.0, x + center.1), color);
+        _color_crow(frame, width, (-y + center.0, y + center.0, -x + center.1), color);
+        if p < 0 {
+            x += 1;
+            p = p + 2 * x + 1;
+        } else {
+            x += 1;
+            y -= 1;
+            p = p + 2 * x - 2 * y + 1;
+        }
+    }
 }

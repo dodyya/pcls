@@ -35,6 +35,8 @@ pub struct Particles {
     pub particles: Vec<Particle>,
     pub count: usize,
     pub g_toward_center: bool,
+    pub coulomb_enabled: bool,
+    pub donut_enabled: bool,
 }
 
 impl Particles {
@@ -43,6 +45,8 @@ impl Particles {
             particles: Vec::with_capacity(capacity),
             count: 0,
             g_toward_center: false,
+            coulomb_enabled: true,
+            donut_enabled: true,
         }
     }
 

@@ -10,13 +10,13 @@ const DT: f32 = 1.0 / 60.0;
 const SUBSTEPS: usize = 12; // Substeps per step() call.
 const NUM_THREADS: usize = 8; // Threads used in resolve_overlaps
 const GRAVITY: f32 = 1.0;
-const DONUT: bool = true; // True is a "donut" constraint, false is a rectangle
+
 const ANTI_BHOLE: f32 = 0.5; // Avoid black holes at center in donut mode
 const RESTITUTION: f32 = 1.0; // How hard particles bounce off each other, 0.0-1.0
 const MAX_V: f32 = 0.01; // Maximum velocity restriction
 const GRID_DEPTH: usize = 3; // Max. particles per grid cell to process. 3 is reasonable lower limit
 const VELOCITY_DAMPING: f32 = 0.999999; // Velocity damping per Verlet step
-const K: f32 = 0.00000005; //Coulomb's constant
+const K: f32 = 0.000000025; //Coulomb's constant
 const COULOMB_RADIUS: i32 = 3; //Grid "radius" for Coulomb
 const EPSILON: f32 = 0.01; //Coulomb minimum distance
 
@@ -38,7 +38,9 @@ impl Simulation {
     pub fn step(&mut self) {
         for _ in 0..SUBSTEPS {
             Self::apply_gravity(&self.pcls);
-            Self::apply_coulomb(&self.grid, &self.pcls, NUM_THREADS);
+            if self.pcls.coulomb_enabled {
+                Self::apply_coulomb(&self.grid, &self.pcls, NUM_THREADS);
+            }
             Self::constrain(&self.pcls);
             self.grid.update(&self.pcls);
             Self::resolve_overlaps(&self.grid, &self.pcls, NUM_THREADS);
@@ -183,6 +185,11 @@ impl Simulation {
     }
 
     #[inline(always)]
+    pub fn is_coulomb_enabled(&self) -> bool {
+        self.pcls.coulomb_enabled
+    }
+
+    #[inline(always)]
     pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, mass: f32, charge: f32) {
         let index = Arc::get_mut(&mut self.pcls)
             .unwrap()
@@ -199,6 +206,16 @@ impl Simulation {
     #[inline(always)]
     pub fn toggle_gravity(&mut self) {
         Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
+    }
+
+    #[inline(always)]
+    pub fn toggle_coulomb(&mut self) {
+        Arc::get_mut(&mut self.pcls).unwrap().coulomb_enabled = !self.pcls.coulomb_enabled;
+    }
+
+    #[inline(always)]
+    pub fn toggle_donut(&mut self) {
+        Arc::get_mut(&mut self.pcls).unwrap().donut_enabled = !self.pcls.donut_enabled;
     }
 
     #[inline(always)]
@@ -319,7 +336,7 @@ impl Simulation {
             let x = p.get_x(i);
             let y = p.get_y(i);
             let r = p.get_r(i);
-            if DONUT {
+            if p.donut_enabled {
                 let center_dist = (x * x + y * y).sqrt();
                 let factor = if center_dist + r > 1.0 {
                     (1.0 - r) / center_dist
