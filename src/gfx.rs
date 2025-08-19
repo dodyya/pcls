@@ -160,32 +160,69 @@ fn _color_crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32), color
 }
 pub fn _rst(frame: &mut [u8]) {
     frame.fill(0);
+    for i in 0..frame.len() {
+        if i % 4 == 3 {
+            frame[i] = 255;
+        }
+    }
 }
 
 // Color palette: [R, G, B, A]
 const PALETTE: [[u8; 4]; 3] = [
-    [255, 0, 0, 255],   // Index 0: Red (positive charge)
-    [0, 0, 255, 255],   // Index 1: Blue (negative charge)  
+    [255, 0, 0, 255],     // Index 0: Red (positive charge)
+    [0, 0, 255, 255],     // Index 1: Blue (negative charge)
     [255, 255, 255, 255], // Index 2: White (magnetism off)
 ];
 
-pub fn color_circle(frame: &mut [u8], width: u32, center: (f32, f32), radius: f32, color_index: u8) {
+pub fn color_circle(
+    frame: &mut [u8],
+    width: u32,
+    center: (f32, f32),
+    radius: f32,
+    color_index: u8,
+) {
     let pixel_center = ndc_to_pix(width, width, center);
     let pixel_radius = (radius * width as f32 / 2.0).round() as i32;
     let color = PALETTE[color_index as usize % PALETTE.len()];
     _color_fill_circle(frame, width, pixel_center, pixel_radius, color);
 }
 
-fn _color_fill_circle(frame: &mut [u8], width: u32, center: (i32, i32), radius: i32, color: [u8; 4]) {
+fn _color_fill_circle(
+    frame: &mut [u8],
+    width: u32,
+    center: (i32, i32),
+    radius: i32,
+    color: [u8; 4],
+) {
     let mut x = 0;
     let mut y = radius;
     let mut p = 1 - radius;
 
     while x <= y {
-        _color_crow(frame, width, (-x + center.0, x + center.0, y + center.1), color);
-        _color_crow(frame, width, (-x + center.0, x + center.0, -y + center.1), color);
-        _color_crow(frame, width, (-y + center.0, y + center.0, x + center.1), color);
-        _color_crow(frame, width, (-y + center.0, y + center.0, -x + center.1), color);
+        _color_crow(
+            frame,
+            width,
+            (-x + center.0, x + center.0, y + center.1),
+            color,
+        );
+        _color_crow(
+            frame,
+            width,
+            (-x + center.0, x + center.0, -y + center.1),
+            color,
+        );
+        _color_crow(
+            frame,
+            width,
+            (-y + center.0, y + center.0, x + center.1),
+            color,
+        );
+        _color_crow(
+            frame,
+            width,
+            (-y + center.0, y + center.0, -x + center.1),
+            color,
+        );
         if p < 0 {
             x += 1;
             p = p + 2 * x + 1;
