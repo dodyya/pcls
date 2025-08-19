@@ -15,7 +15,7 @@ const MAX_PARTICLE_SIZE: f32 = 1.0 / 256.0;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
 const PDENSITY: f32 = 1.0;
-const RECORDING_INTERVAL: u8 = 1;
+const RECORDING_INTERVAL: u8 = 2;
 
 pub struct Visualization {
     window: Window,
