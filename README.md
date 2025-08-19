@@ -11,7 +11,7 @@ The simulation can handle about 50,000 particles at 60 FPS on my machine with Co
 
 ## Controls
 
-Run using Cargo: `cargo run --release`
+Run using Cargo: `cargo run --release`.
 Left click to spawn particles continuously, right click to clear screen of particles. Toggle gravity between radially towards the center of the screen and downwards with SPACE.
 Halt all particles with S. Toggle particle constraint with D, turn electromagnetic effects off with M.
 
