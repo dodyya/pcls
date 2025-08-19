@@ -1,6 +1,6 @@
 use crate::grid::Grid;
 use crate::maybe_id::MaybeID;
-use crate::particles::{Particle, Particles};
+use crate::particles::Particles;
 use rand::Rng;
 use std::ops::Range;
 use std::sync::Arc;

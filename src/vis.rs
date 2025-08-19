@@ -15,6 +15,7 @@ const MAX_PARTICLE_SIZE: f32 = 1.0 / 256.0;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
 const PDENSITY: f32 = 1.0;
+const RECORDING_INTERVAL: u8 = 1;
 
 pub struct Visualization {
     window: Window,
@@ -30,16 +31,19 @@ impl Visualization {
         let mut ticker: u8 = 0;
         let mut rng = rand::thread_rng();
         let mut mouse_down = false;
+        let mut recording_mode = false;
 
         self.event_loop.run(move |event, _, control_flow| {
-            if ticker == 0 {
+            if ticker % 16 == 0 {
+                let recording_status = if recording_mode { " [RECORDING]" } else { "" };
                 self.window.set_title(&format!(
-                    "Verlet particle simulation: {} particles - FPS: {:.0}",
+                    "Verlet particle simulation: {} particles - FPS: {:.0}{}",
                     self.sim.pcls.count,
-                    1.0 / frame_time.as_secs_f64() as f64
+                    1.0 / frame_time.as_secs_f64() as f64,
+                    recording_status
                 ));
             }
-            ticker = ticker.wrapping_add(8);
+            ticker = ticker.wrapping_add(1);
 
             display(
                 self.pixels.frame_mut(),
@@ -51,6 +55,10 @@ impl Visualization {
 
             (frame_time, last_frame) = (last_frame.elapsed(), Instant::now());
             self.sim.step();
+
+            if recording_mode && ticker % RECORDING_INTERVAL == 0 {
+                output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
+            }
 
             if mouse_down {
                 if let Some((cursor_x, cursor_y)) = cursor_pos {
@@ -114,6 +122,9 @@ impl Visualization {
                         winit::event::VirtualKeyCode::P => {
                             output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
                         }
+                        winit::event::VirtualKeyCode::R => {
+                            recording_mode = !recording_mode;
+                        }
                         _ => {}
                     },
                     _ => {}
@@ -164,9 +175,9 @@ fn display(
                 0
             } else {
                 1
-            } // Red for positive, Blue for negative
+            }
         } else {
-            2 // White when magnetism is off
+            2
         };
         gfx::color_circle(frame, width, (x, y), r, color_index);
     });
@@ -189,9 +200,6 @@ fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut T
 }
 
 fn output_frame(width: u32, height: u32, pixel_data: &[u8]) {
-    // if pixel_data.iter().any(|&p| p != 0) {
-    //     println!("non-uninit buffer!");
-    // }
     use std::io::{self, BufWriter, Write};
 
     let mut output = BufWriter::new(io::stdout());
