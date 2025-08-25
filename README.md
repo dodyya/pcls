@@ -1,7 +1,8 @@
 # PCLS - Particle Physics Simulation
 
 ![Demo gif](quickerdemo.gif)
-![Demo video](demo.mp4)
+
+(GIF runs way slower than simulation)
 
 A decnetly fast, multithreaded particle physics simulation engine written in Rust, capable of simulating tens of thousands of particles in real-time with gravity, collision detection, and other miscellaneous forces. (GIF displays slower in GitHub than it should)
 
