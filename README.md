@@ -22,6 +22,7 @@ PCLS is a fast, multithreaded particle physics simulation engine built in Rust. 
 - **Right Click:** Clear all particles
 - **Space:** Toggle gravity mode
 - **S:** Halt all particles
+- **Q:** Quit application
 - **D:** Toggle particle constraint
 - **M:** Toggle electromagnetic effects
 - **R:** Toggle frame recording (export pixel buffer to stdout for use with `qoip`)

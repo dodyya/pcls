@@ -125,6 +125,9 @@ impl Visualization {
                         winit::event::VirtualKeyCode::R => {
                             recording = !recording;
                         }
+                        winit::event::VirtualKeyCode::Q => {
+                            *control_flow = ControlFlow::Exit;
+                        }
                         _ => {}
                     },
                     _ => {}
