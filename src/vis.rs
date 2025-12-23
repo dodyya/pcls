@@ -31,11 +31,11 @@ impl Visualization {
         let mut ticker: u8 = 0;
         let mut rng = rand::thread_rng();
         let mut mouse_down = false;
-        let mut recording_mode = false;
+        let mut recording = false;
 
         self.event_loop.run(move |event, _, control_flow| {
             if ticker % 16 == 0 {
-                let recording_status = if recording_mode { " [RECORDING]" } else { "" };
+                let recording_status = if recording { " [RECORDING]" } else { "" };
                 self.window.set_title(&format!(
                     "Verlet particle simulation: {} particles - FPS: {:.0}{}",
                     self.sim.pcls.count,
@@ -56,7 +56,7 @@ impl Visualization {
             (frame_time, last_frame) = (last_frame.elapsed(), Instant::now());
             self.sim.step();
 
-            if recording_mode && ticker % RECORDING_INTERVAL == 0 {
+            if recording && ticker % RECORDING_INTERVAL == 0 {
                 output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
             }
 
@@ -123,7 +123,7 @@ impl Visualization {
                             output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
                         }
                         winit::event::VirtualKeyCode::R => {
-                            recording_mode = !recording_mode;
+                            recording = !recording;
                         }
                         _ => {}
                     },
