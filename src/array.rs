@@ -1,9 +1,6 @@
-#![allow(unused)]
 use std::{
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
-    ptr::slice_from_raw_parts,
-    sync::Arc,
     vec,
 };
 
@@ -53,17 +50,6 @@ impl Array3D<MaybeID> {
     pub fn clear(&self) {
         for i in 0..self.data.len() {
             self.data[i].make_empty();
-        }
-    }
-}
-
-impl<T: Debug> Array3D<T> {
-    pub fn from_vec(value: Vec<T>, width: usize, height: usize, depth: usize) -> Self {
-        Array3D {
-            data: value.try_into().unwrap(),
-            width,
-            height,
-            depth,
         }
     }
 }
