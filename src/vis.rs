@@ -160,6 +160,8 @@ impl Visualization {
             .unwrap();
 
         let size = window.inner_size();
+
+        #[cfg(target_os = "linux")]
         let pixels = PixelsBuilder::new(
             size.width,
             size.height,
@@ -167,6 +169,15 @@ impl Visualization {
         ).wgpu_backend(Backends::VULKAN)
         .build()
         .unwrap();
+
+        #[cfg(not(target_os = "linux"))]
+        let pixels = Pixels::new(
+            size.width,
+            size.height,
+            SurfaceTexture::new(size.width, size.height, &window),
+        )
+        .unwrap();
+
         let sim = Simulation::new(MAX_PARTICLE_SIZE * 2.0);
 
         Self {

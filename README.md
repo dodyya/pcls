@@ -28,7 +28,7 @@ PCLS is a fast, multithreaded particle physics simulation engine built in Rust. 
 - **R:** Toggle frame recording (export pixel buffer to stdout for use with `qoip`)
 - **P:** Dump current frame to stdout
 
-I recently discovered that this only runs well on my M4 mac. I suspect this is because I abuse `pixels` graphics when I really ought to be working with wgpu directly, and there is some cost (obscured by the unified memory architecture of the mac) that I am incurring. Probably something to do with moving a lot of data between the CPU and GPU on every frame.
+
 
 ## Technical Overview
 
