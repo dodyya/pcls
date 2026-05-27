@@ -1,6 +1,6 @@
 use crate::gfx;
 use crate::sim::Simulation;
-use pixels::{Pixels, SurfaceTexture};
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture, wgpu::Backends};
 use rand::rngs::ThreadRng;
 use rand::Rng;
 use std::time::{Duration, Instant};
@@ -34,32 +34,6 @@ impl Visualization {
         let mut recording = false;
 
         self.event_loop.run(move |event, _, control_flow| {
-            if ticker % 16 == 0 {
-                let recording_status = if recording { " [RECORDING]" } else { "" };
-                self.window.set_title(&format!(
-                    "Verlet particle simulation: {} particles - FPS: {:.0}{}",
-                    self.sim.pcls.count,
-                    1.0 / frame_time.as_secs_f64() as f64,
-                    recording_status
-                ));
-            }
-            ticker = ticker.wrapping_add(1);
-
-            display(
-                self.pixels.frame_mut(),
-                self.sim.get_drawable(),
-                WINDOW_SIZE,
-                self.sim.is_coulomb_enabled(),
-            );
-            _ = self.pixels.render();
-
-            (frame_time, last_frame) = (last_frame.elapsed(), Instant::now());
-            self.sim.step();
-
-            if recording && ticker % RECORDING_INTERVAL == 0 {
-                output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
-            }
-
             if mouse_down {
                 if let Some((cursor_x, cursor_y)) = cursor_pos {
                     if (0.0..=WINDOW_SIZE as f32).contains(&cursor_x)
@@ -132,7 +106,45 @@ impl Visualization {
                     },
                     _ => {}
                 },
-                _ => {}
+
+                Event::MainEventsCleared => {
+                    if ticker % 16 == 0 {
+                        let recording_status = if recording { " [RECORDING]" } else { "" };
+                        self.window.set_title(&format!(
+                            "Verlet particle simulation: {} particles - FPS: {:.0}{}",
+                            self.sim.pcls.count,
+                            1.0 / frame_time.as_secs_f64() as f64,
+                            recording_status
+                        ));
+                    }
+                    ticker = ticker.wrapping_add(1);
+
+                    self.sim.step();
+
+
+                    self.window.request_redraw();
+
+
+                },
+                Event::RedrawRequested(_) => {
+                    (frame_time, last_frame) = (last_frame.elapsed(), Instant::now());
+
+
+
+                    display(
+                        self.pixels.frame_mut(),
+                        self.sim.get_drawable(),
+                        WINDOW_SIZE,
+                        self.sim.is_coulomb_enabled(),
+                    );
+                    _ = self.pixels.render();
+
+                    if recording && ticker % RECORDING_INTERVAL == 0 {
+                        output_frame(WINDOW_SIZE, WINDOW_SIZE, self.pixels.frame());
+                    }
+
+                },
+                _=>{},
             }
         });
     }
@@ -148,11 +160,12 @@ impl Visualization {
             .unwrap();
 
         let size = window.inner_size();
-        let pixels = Pixels::new(
+        let pixels = PixelsBuilder::new(
             size.width,
             size.height,
             SurfaceTexture::new(size.width, size.height, &window),
-        )
+        ).wgpu_backend(Backends::VULKAN)
+        .build()
         .unwrap();
         let sim = Simulation::new(MAX_PARTICLE_SIZE * 2.0);
 
