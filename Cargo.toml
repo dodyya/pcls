@@ -12,3 +12,4 @@ atomic_float = "1.1.0"
 
 [profile.release]
 debug = true
+opt-level = 3

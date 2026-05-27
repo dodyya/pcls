@@ -159,11 +159,11 @@ fn _color_crow(frame: &mut [u8], width: u32, (x1, x2, y): (i32, i32, i32), color
     }
 }
 pub fn _rst(frame: &mut [u8]) {
-    frame.fill(0);
-    for i in 0..frame.len() {
-        if i % 4 == 3 {
-            frame[i] = 255;
-        }
+    for ch in frame.chunks_exact_mut(4){
+        ch[0]=0;
+        ch[1]=0;
+        ch[2]=0;
+        ch[3]=255;
     }
 }
 

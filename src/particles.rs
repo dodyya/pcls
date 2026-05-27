@@ -45,7 +45,7 @@ impl Particles {
             particles: Vec::with_capacity(capacity),
             count: 0,
             g_toward_center: false,
-            coulomb_enabled: true,
+            coulomb_enabled: false,
             donut_enabled: true,
         }
     }
