@@ -1,13 +1,12 @@
+mod app;
 mod array;
-mod gfx;
 mod grid;
 mod maybe_id;
 mod particles;
+mod render;
 mod sim;
-mod vis;
 
-use crate::vis::Visualization;
+use crate::app::App;
 fn main() {
-    let vis = Visualization::new();
-    vis.run();
+    App::run();
 }
