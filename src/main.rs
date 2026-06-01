@@ -5,6 +5,7 @@ mod maybe_id;
 mod particles;
 mod render;
 mod sim;
+mod types;
 
 use crate::app::App;
 fn main() {

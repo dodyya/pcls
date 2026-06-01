@@ -1,5 +1,6 @@
 use crate::render::Renderer;
 use crate::sim::Simulation;
+use crate::types::Real;
 use glutin::{
     config::ConfigTemplateBuilder,
     context::{ContextAttributesBuilder, PossiblyCurrentContext},
@@ -22,10 +23,10 @@ use winit::{
     window::Window,
 };
 
-const MAX_PARTICLE_SIZE: f32 = 1.0 / 1024.0;
+const MAX_PARTICLE_SIZE: Real = 1. / 256.;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
-const PDENSITY: f32 = 1.0;
+const PDENSITY: Real = 1.0;
 
 pub struct App {
     vis: Option<Visualization>,
@@ -50,7 +51,7 @@ struct Visualization {
 }
 
 struct SimState {
-    cursor_pos: Option<(f32, f32)>,
+    cursor_pos: Option<(Real, Real)>,
     last_frame: Instant,
     frame_time: Duration,
     ticker: u8,
@@ -175,8 +176,8 @@ impl ApplicationHandler for App {
 
                 if vis.st.mouse_down {
                     if let Some((cursor_x, cursor_y)) = vis.st.cursor_pos {
-                        if (0.0..=WINDOW_SIZE as f32).contains(&cursor_x)
-                            && (0.0..=WINDOW_SIZE as f32).contains(&cursor_y)
+                        if (0.0..=WINDOW_SIZE as Real).contains(&cursor_x)
+                            && (0.0..=WINDOW_SIZE as Real).contains(&cursor_y)
                         {
                             add_particles(cursor_x, cursor_y, &mut vis.sim, &mut vis.st.rng);
                         }
@@ -196,13 +197,13 @@ impl ApplicationHandler for App {
 
                 vis.renderer.render(
                     vis.sim.get_drawable(),
-                    vis.sim.is_coulomb_enabled(),
+                    vis.sim.is_hue_force_enabled(),
                     vis.window.inner_size().width,
                 );
                 vis.gl_surface.swap_buffers(&vis.gl_context).unwrap();
             }
             we::CursorMoved { position, .. } => {
-                vis.st.cursor_pos = Some((position.x as f32, position.y as f32));
+                vis.st.cursor_pos = Some((position.x as Real, position.y as Real));
             }
             we::MouseInput {
                 state: winit::event::ElementState::Pressed,
@@ -235,7 +236,7 @@ impl ApplicationHandler for App {
                     vis.sim.toggle_gravity();
                 }
                 kc::KeyM => {
-                    vis.sim.toggle_coulomb();
+                    vis.sim.toggle_hue_force();
                 }
                 kc::KeyD => {
                     vis.sim.toggle_donut();
@@ -262,16 +263,15 @@ impl ApplicationHandler for App {
     }
 }
 
-fn add_particles(cursor_x: f32, cursor_y: f32, sim: &mut Simulation, rng: &mut ThreadRng) {
-    let sim_x = (cursor_x / WINDOW_SIZE as f32) * 2.0 - 1.0;
-    let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as f32) * 2.0;
+fn add_particles(cursor_x: Real, cursor_y: Real, sim: &mut Simulation, rng: &mut ThreadRng) {
+    let sim_x = (cursor_x / WINDOW_SIZE as Real) * 2.0 - 1.0;
+    let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as Real) * 2.0;
 
     for _ in 0..PARTICLES_ON_CLICK {
-        let dx = rng.gen_range(-0.2..0.2);
-        let dy = rng.gen_range(-0.2..0.2);
+        let dx: Real = rng.gen_range(-0.2..0.2);
+        let dy: Real = rng.gen_range(-0.2..0.2);
         let r = MAX_PARTICLE_SIZE;
-
-        let charge = if dx > 0.0 && dy > 0.0 { 1.0 } else { -1.0 };
-        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, charge);
+        let hue: Real = rng.gen_range(0.0..1.0);
+        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, hue);
     }
 }

@@ -1,22 +1,24 @@
 use crate::grid::Grid;
 use crate::maybe_id::MaybeID;
 use crate::particles::Particles;
+use crate::types::{Real, TAU};
 use rand::Rng;
 use rayon::prelude::*;
 use std::sync::Arc;
 
-const DT: f32 = 1.0 / 60.0;
+const DT: Real = 1.0 / 60.0;
 const SUBSTEPS: usize = 12; // Substeps per step() call.
-const GRAVITY: f32 = 1.0;
+const GRAVITY: Real = 1.0;
 
-const ANTI_BHOLE: f32 = 0.5; // Avoid black holes at center in donut mode
-const RESTITUTION: f32 = 1.0; // How hard particles bounce off each other, 0.0-1.0
-const MAX_V: f32 = 0.01; // Maximum velocity restriction
+const ANTI_BHOLE: Real = 0.5; // Avoid black holes at center in donut mode
+const RESTITUTION: Real = 1.0; // How hard particles bounce off each other, 0.0-1.0
+const MAX_V: Real = 0.01; // Maximum velocity restriction
 const GRID_DEPTH: usize = 3; // Max. particles per grid cell to process. 3 is reasonable lower limit
-const VELOCITY_DAMPING: f32 = 0.999999; // Velocity damping per Verlet step
-const K: f32 = 0.000000025; //Coulomb's constant
-const COULOMB_RADIUS: i32 = 3; //Grid "radius" for Coulomb
-const EPSILON: f32 = 0.01; //Coulomb minimum distance
+const VELOCITY_DAMPING: Real = 0.999999; // Velocity damping per Verlet step
+const K: Real = 0.002; // Hue-force strength
+const HUE_FORCE_RADIUS: i32 = 3; // Grid "radius" for the hue force
+const HOLE_SIZE: Real = 0.3;
+const DONUT_SIZE: Real = 1.0;
 
 #[derive(Debug)]
 pub struct Simulation {
@@ -25,7 +27,7 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn new(cell_size: f32) -> Self {
+    pub fn new(cell_size: Real) -> Self {
         let grid = Grid::new(cell_size, GRID_DEPTH);
         Self {
             pcls: Arc::new(Particles::new(1)),
@@ -35,13 +37,13 @@ impl Simulation {
     pub fn step(&mut self) {
         for _ in 0..SUBSTEPS {
             Self::apply_gravity(&self.pcls);
-            if self.pcls.coulomb_enabled {
-                Self::apply_coulomb(&self.grid, &self.pcls);
+            if self.pcls.hue_force_enabled {
+                Self::apply_hue_force(&self.grid, &self.pcls);
             }
             Self::constrain(&self.pcls);
             self.grid.update(&self.pcls);
             Self::resolve_overlaps(&self.grid, &self.pcls);
-            Self::verlet(&self.pcls, DT / SUBSTEPS as f32);
+            Self::verlet(&self.pcls, DT / SUBSTEPS as Real);
         }
     }
 
@@ -72,7 +74,7 @@ impl Simulation {
         }
     }
 
-    fn coulomb_neighbors<'a>(
+    fn hue_force_neighbors<'a>(
         out: &mut Vec<&'a [MaybeID]>,
         grid: &'a Grid,
         i: usize,
@@ -80,9 +82,11 @@ impl Simulation {
         c: usize,
     ) {
         out.clear();
-        for di in -COULOMB_RADIUS..=COULOMB_RADIUS {
-            for dj in -COULOMB_RADIUS..=COULOMB_RADIUS {
-                if di == 0 && dj == 0 {
+        // Forward-only half-plane (same pattern as `neighbors`, scaled to radius)
+        // so each cross-cell pair is visited exactly once.
+        for di in -HUE_FORCE_RADIUS..=HUE_FORCE_RADIUS {
+            for dj in -HUE_FORCE_RADIUS..=HUE_FORCE_RADIUS {
+                if !(dj > 0 || (dj == 0 && di > 0)) {
                     continue;
                 }
                 let ni = i as i32 + di;
@@ -117,41 +121,41 @@ impl Simulation {
         }
     }
 
-    fn coulomb_column(i: usize, c: usize, grid: &Grid, pcls: &Particles) {
-        let mut magnetic_neigh: Vec<&[MaybeID]> = Vec::with_capacity(24);
+    fn hue_force_column(i: usize, c: usize, grid: &Grid, pcls: &Particles) {
+        let mut neigh: Vec<&[MaybeID]> = Vec::with_capacity(24);
 
         for j in (0..c).rev() {
             let inner = &grid.map[(i, j)];
-            Self::coulomb_neighbors(&mut magnetic_neigh, grid, i, j, c);
+            Self::hue_force_neighbors(&mut neigh, grid, i, j, c);
 
             for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
                 let in_val = in_id.unchecked_id();
 
-                for ids in &magnetic_neigh {
+                for ids in &neigh {
                     for out_id in (*ids).iter().take_while(|x| x.is_some()) {
-                        Self::coulomb(pcls, in_val, out_id.unchecked_id());
+                        Self::hue_force(pcls, in_val, out_id.unchecked_id());
                     }
                 }
 
                 for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
-                    Self::coulomb(pcls, in_val, other_id.unchecked_id());
+                    Self::hue_force(pcls, in_val, other_id.unchecked_id());
                 }
             }
         }
     }
 
-    pub fn get_drawable(&self) -> impl Iterator<Item = (f32, f32, f32, f32)> + '_ {
+    pub fn get_drawable(&self) -> impl Iterator<Item = (Real, Real, Real, Real)> + '_ {
         self.pcls.get_drawable()
     }
 
-    pub fn is_coulomb_enabled(&self) -> bool {
-        self.pcls.coulomb_enabled
+    pub fn is_hue_force_enabled(&self) -> bool {
+        self.pcls.hue_force_enabled
     }
 
-    pub fn add_particle(&mut self, x: f32, y: f32, radius: f32, mass: f32, charge: f32) {
+    pub fn add_particle(&mut self, x: Real, y: Real, radius: Real, mass: Real, hue: Real) {
         let index = Arc::get_mut(&mut self.pcls)
             .unwrap()
-            .push((x, y, radius, mass, charge));
+            .push((x, y, radius, mass, hue));
         self.grid.try_insert(index, x, y);
     }
 
@@ -164,8 +168,8 @@ impl Simulation {
         Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
     }
 
-    pub fn toggle_coulomb(&mut self) {
-        Arc::get_mut(&mut self.pcls).unwrap().coulomb_enabled = !self.pcls.coulomb_enabled;
+    pub fn toggle_hue_force(&mut self) {
+        Arc::get_mut(&mut self.pcls).unwrap().hue_force_enabled = !self.pcls.hue_force_enabled;
     }
 
     pub fn toggle_donut(&mut self) {
@@ -188,10 +192,10 @@ impl Simulation {
         }
     }
 
-    pub fn apply_coulomb(grid: &Grid, pcls: &Particles) {
+    pub fn apply_hue_force(grid: &Grid, pcls: &Particles) {
         let c = grid.cell_count;
         (0..c).into_par_iter().for_each(|i| {
-            Self::coulomb_column(i, c, grid, pcls);
+            Self::hue_force_column(i, c, grid, pcls);
         });
     }
 
@@ -214,7 +218,7 @@ impl Simulation {
         let (normal_x, normal_y) = if distance != 0.0 {
             (dx / distance, dy / distance)
         } else {
-            let theta = rand::thread_rng().gen_range(0.0..std::f32::consts::PI * 2.0);
+            let theta = rand::thread_rng().gen_range(0.0..TAU);
             (theta.cos(), theta.sin())
         };
 
@@ -233,31 +237,42 @@ impl Simulation {
         p.set_y(j, yj - correction_y * mass_ratio_1);
     }
 
-    fn coulomb(p: &Particles, i: usize, j: usize) {
+    // Hue-force: like-hues attract, opposite hues (Δh = 0.5) repel; neutral at Δh = 0.25.
+    // `-cos(2π · Δh)` is naturally periodic in hue, so wrap-around is free.
+    fn hue_force(p: &Particles, i: usize, j: usize) {
         let xi = p.get_x(i);
         let yi = p.get_y(i);
-        let ci = p.get_c(i);
+        let hi = p.get_hue(i);
         let mi = p.get_m(i);
         let xj = p.get_x(j);
         let yj = p.get_y(j);
-        let cj = p.get_c(j);
+        let hj = p.get_hue(j);
         let mj = p.get_m(j);
         let dx = xi - xj;
         let dy = yi - yj;
         let distance_sq = dx * dx + dy * dy;
-        let force = K * ci * cj / (distance_sq);
-        let distance = distance_sq.sqrt().max(EPSILON);
+        let hue_dist = (hi - hj).abs().min((hi - hj - 1.).abs()).min((hi - hj + 1.).abs());
+        // Linear: force ∝ (0.25 - hue_dist), negative (attract) for like-hues,
+        // positive (repel) for opposites, zero at quarter-turn. Amplitude is 0.25
+        // (vs 1.0 for the cos version) so K is effectively ~4× weaker here.
+        // Scale by (touching-distance)² so the force at touching distance is K * factor,
+        // independent of particle size.
+        let touching = 2.0 * p.min_radius;
+        let force = K * (hue_dist - 0.25) * touching * touching / distance_sq;
+        let distance = distance_sq.sqrt().max(2.*p.min_radius);
 
         let fx = force * dx / distance;
         let fy = force * dy / distance;
 
-        p.set_ax(i, p.get_ax(i) + fx / mi);
-        p.set_ay(i, p.get_ay(i) + fy / mi);
-        p.set_ax(j, p.get_ax(j) - fx / mj);
-        p.set_ay(j, p.get_ay(j) - fy / mj);
+        // fetch_add (not load+store) — parallel column workers can hit the same
+        // particle since the 3-cell reach overlaps adjacent par-iter tasks.
+        p.add_ax(i, fx / mi);
+        p.add_ay(i, fy / mi);
+        p.add_ax(j, -fx / mj);
+        p.add_ay(j, -fy / mj);
     }
 
-    pub fn verlet(p: &Particles, dt: f32) {
+    pub fn verlet(p: &Particles, dt: Real) {
         for i in 0..p.count {
             let x = p.get_x(i);
             let y = p.get_y(i);
@@ -279,10 +294,10 @@ impl Simulation {
             let r = p.get_r(i);
             if p.donut_enabled {
                 let center_dist = (x * x + y * y).sqrt();
-                let factor = if center_dist + r > 1.0 {
-                    (1.0 - r) / center_dist
-                } else if center_dist - r < 0.3 {
-                    (0.3 + r) / center_dist
+                let factor = if center_dist + r > DONUT_SIZE {
+                    (DONUT_SIZE - r) / center_dist
+                } else if center_dist - r < HOLE_SIZE {
+                    (HOLE_SIZE + r) / center_dist
                 } else {
                     1.0
                 };
