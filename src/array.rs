@@ -1,7 +1,6 @@
 use std::{
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
-    vec,
 };
 
 use crate::maybe_id::MaybeID;
@@ -11,39 +10,6 @@ pub struct Array3D<T> {
     pub width: usize,
     pub height: usize,
     pub depth: usize,
-}
-
-impl<T> Array3D<Option<T>> {
-    pub fn new(width: usize, height: usize, depth: usize) -> Self {
-        let mut data: Vec<Option<T>> = Vec::with_capacity(width * height * depth);
-        for _ in 0..width * height * depth {
-            data.push(None);
-        }
-        Array3D {
-            data,
-            width,
-            height,
-            depth,
-        }
-    }
-}
-impl<T> Array3D<T>
-where
-    T: Default + Copy,
-{
-    pub fn fill(data: T, width: usize, height: usize, depth: usize) -> Self {
-        Array3D {
-            data: vec![data; width * height * depth],
-            width,
-            height,
-            depth,
-        }
-    }
-
-    pub fn reset(&mut self, value: T) {
-        self.data
-            .copy_from_slice(&[value].repeat(self.width * self.height * self.depth));
-    }
 }
 
 impl Array3D<MaybeID> {
@@ -60,7 +26,7 @@ where
 {
     pub fn default(w: usize, h: usize, d: usize) -> Self {
         let mut data: Vec<T> = Vec::with_capacity(w * h * d);
-        for i in 0..w * h * d {
+        for _ in 0..w * h * d {
             data.push(Default::default());
         }
         Array3D {

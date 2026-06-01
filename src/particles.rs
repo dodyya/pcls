@@ -50,14 +50,6 @@ impl Particles {
         }
     }
 
-    pub fn add_10k(&mut self, x: f32, y: f32, r: f32, m: f32, charge: f32) {
-        self.particles.reserve(10_000);
-        for _ in 0..10_000 {
-            self.particles.push(Particle::new(x, y, r, m, charge));
-        }
-        self.count += 10_000;
-    }
-
     pub fn clear(&mut self) {
         self.particles = vec![];
         self.count = 0;
