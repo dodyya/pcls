@@ -101,6 +101,8 @@ impl Visualization {
 
         let context_attributes =
             ContextAttributesBuilder::new().build(Some(raw_window_handle));
+        // SAFETY: `raw_window_handle` is valid because `window` is kept alive in `Visualization`
+        // for the lifetime of the context (struct field order ensures context drops before window).
         let not_current_context = unsafe {
             gl_display
                 .create_context(&gl_config, &context_attributes)
@@ -109,6 +111,7 @@ impl Visualization {
 
         let surface_attributes =
             window.build_surface_attributes(SurfaceAttributesBuilder::new()).unwrap();
+        // SAFETY: same as above — `window` outlives the surface.
         let gl_surface = unsafe {
             gl_display
                 .create_window_surface(&gl_config, &surface_attributes)
@@ -117,7 +120,8 @@ impl Visualization {
 
         let gl_context = not_current_context.make_current(&gl_surface).unwrap();
 
-        // Context is current; load GL function pointers into glow.
+        // SAFETY: the context was made current just above, so `get_proc_address` returns
+        // valid GL function pointers compatible with the calls glow will make through them.
         let gl = unsafe {
             glow::Context::from_loader_function_cstr(|s| gl_display.get_proc_address(s).cast())
         };
