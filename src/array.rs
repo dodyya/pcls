@@ -48,6 +48,7 @@ impl<T> Index<(usize, usize, usize)> for Array3D<T> {
                 index.0, index.1, index.2, self.width, self.height, self.depth
             );
         }
+        // SAFETY: each coordinate was bounds-checked above, so the flat index is in-range.
         unsafe {
             self.data
                 .get_unchecked((index.0 * self.height + index.1) * self.depth + index.2)
@@ -63,6 +64,7 @@ impl<T> IndexMut<(usize, usize, usize)> for Array3D<T> {
                 index.0, index.1, index.2, self.width, self.height, self.depth
             );
         }
+        // SAFETY: each coordinate was bounds-checked above, so the flat index is in-range.
         unsafe {
             self.data
                 .get_unchecked_mut((index.0 * self.height + index.1) * self.depth + index.2)
@@ -81,6 +83,7 @@ impl<'a, T: 'a> Index<(usize, usize)> for Array3D<T> {
             );
         }
         let start = (index.0 * self.height + index.1) * self.depth;
+        // SAFETY: (x, y) was bounds-checked above, so the depth-sized slab at `start` fits in data.
         unsafe { self.data.get_unchecked(start..start + self.depth) }
     }
 }

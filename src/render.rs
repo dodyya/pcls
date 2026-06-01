@@ -47,6 +47,8 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(gl: glow::Context) -> Self {
+        // SAFETY: caller guarantees a GL context is current on this thread; every glow call
+        // below is a standard one-time setup (program, VAO/VBO, attrib pointers, uniforms).
         unsafe {
             let program = link_program(&gl, VERTEX_SHADER, FRAGMENT_SHADER);
 
@@ -100,6 +102,9 @@ impl Renderer {
         let count = (self.verts.len() / FLOATS_PER_PARTICLE) as i32;
 
         let gl = &self.gl;
+        // SAFETY: caller guarantees the same GL context that built this Renderer is current.
+        // The `from_raw_parts` reinterprets `self.verts: Vec<f32>` as bytes — pointer and
+        // length come from the same live vec, and f32 has no invalid bit patterns.
         unsafe {
             gl.viewport(0, 0, win_size as i32, win_size as i32);
             gl.clear(glow::COLOR_BUFFER_BIT);
@@ -124,7 +129,10 @@ impl Renderer {
     }
 }
 
+/// # Safety
+/// A GL context must be current on the calling thread.
 unsafe fn link_program(gl: &glow::Context, vs_src: &str, fs_src: &str) -> glow::Program {
+    // SAFETY: GL context is current per the function's contract above.
     unsafe {
         let program = gl.create_program().unwrap();
         let shaders = [(glow::VERTEX_SHADER, vs_src), (glow::FRAGMENT_SHADER, fs_src)];
