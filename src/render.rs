@@ -1,16 +1,15 @@
+use crate::sim::PARTICLE_RADIUS;
 use crate::types::Real;
 use glow::HasContext as _;
 
 const VERTEX_SHADER: &str = r#"#version 330 core
 layout (location = 0) in vec2 a_pos;
-layout (location = 1) in float a_radius;
-layout (location = 2) in float a_hue;
-uniform float u_win_size;
+layout (location = 1) in float a_hue;
+uniform float u_point_size;
 out float v_hue;
 void main() {
     gl_Position = vec4(a_pos, 0.0, 1.0);
-    // NDC radius r spans r * (win/2) px; diameter (point size) = r * win.
-    gl_PointSize = a_radius * u_win_size;
+    gl_PointSize = u_point_size;
     v_hue = a_hue;
 }
 "#;
@@ -35,14 +34,14 @@ void main() {
 }
 "#;
 
-const FLOATS_PER_PARTICLE: usize = 4; // x, y, radius, hue
+const FLOATS_PER_PARTICLE: usize = 3; // x, y, hue
 
 pub struct Renderer {
     gl: glow::Context,
     program: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
-    u_win_size: Option<glow::UniformLocation>,
+    u_point_size: Option<glow::UniformLocation>,
     u_hue_force: Option<glow::UniformLocation>,
     verts: Vec<f32>,
 }
@@ -63,17 +62,14 @@ impl Renderer {
             // a_pos: vec2 @ offset 0
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
-            // a_radius: float @ offset 8
+            // a_hue: float @ offset 8
             gl.enable_vertex_attrib_array(1);
             gl.vertex_attrib_pointer_f32(1, 1, glow::FLOAT, false, stride, 2 * size_of::<f32>() as i32);
-            // a_charge: float @ offset 12
-            gl.enable_vertex_attrib_array(2);
-            gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, stride, 3 * size_of::<f32>() as i32);
 
             gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
 
-            let u_win_size = gl.get_uniform_location(program, "u_win_size");
+            let u_point_size = gl.get_uniform_location(program, "u_point_size");
             let u_hue_force = gl.get_uniform_location(program, "u_hue_force");
 
             gl.enable(glow::PROGRAM_POINT_SIZE);
@@ -84,7 +80,7 @@ impl Renderer {
                 program,
                 vao,
                 vbo,
-                u_win_size,
+                u_point_size,
                 u_hue_force,
                 verts: Vec::new(),
             }
@@ -93,18 +89,21 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        particles: impl Iterator<Item = (Real, Real, Real, Real)>,
+        particles: impl Iterator<Item = (Real, Real, Real)>,
         hue_force_enabled: bool,
         win_size: u32,
     ) {
         // The GPU vertex attributes are f32; downcast at the boundary so the
         // simulation can use a wider `Real` without changing GL plumbing.
         self.verts.clear();
-        for (x, y, r, hue) in particles {
+        for (x, y, hue) in particles {
             self.verts
-                .extend_from_slice(&[x as f32, y as f32, r as f32, hue as f32]);
+                .extend_from_slice(&[x as f32, y as f32, hue as f32]);
         }
         let count = (self.verts.len() / FLOATS_PER_PARTICLE) as i32;
+
+        // NDC radius spans r * (win/2) px; diameter (point size) = r * win.
+        let point_size = (PARTICLE_RADIUS * win_size as Real) as f32;
 
         let gl = &self.gl;
         // SAFETY: caller guarantees the same GL context that built this Renderer is current.
@@ -123,7 +122,7 @@ impl Renderer {
                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
 
                 gl.use_program(Some(self.program));
-                gl.uniform_1_f32(self.u_win_size.as_ref(), win_size as f32);
+                gl.uniform_1_f32(self.u_point_size.as_ref(), point_size);
                 gl.uniform_1_i32(self.u_hue_force.as_ref(), hue_force_enabled as i32);
 
                 gl.bind_vertex_array(Some(self.vao));
