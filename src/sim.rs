@@ -6,7 +6,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use std::sync::Arc;
 
-pub const PARTICLE_RADIUS: Real = 1.0 / 256.0;
+pub const PARTICLE_RADIUS: Real = 1.0 / 300.0;
 const PARTICLE_MASS: Real = 1.0;
 
 const DT: Real = 1.0 / 60.0;
@@ -16,11 +16,11 @@ const GRAVITY: Real = 1.0;
 const ANTI_BHOLE: Real = 0.5; // Avoid black holes at center in donut mode
 const RESTITUTION: Real = 0.5; // How hard particles bounce off each other, 0.0-1.0
 const MAX_V: Real = 0.0025; // Maximum velocity restriction
-const GRID_DEPTH: usize = 3; // Max. particles per grid cell to process. 3 is reasonable lower limit
+const GRID_DEPTH: usize = 4; // Max. particles per grid cell to process. 3 is reasonable lower limit
 const VELOCITY_DAMPING: Real = 0.999999; // Velocity damping per Verlet step
-const K: Real = 300.; // Hue-force strength
+const K: Real = 300.*256.*PARTICLE_RADIUS;//*(1./256./PARTICLE_RADIUS); // Hue-force strength
 const HUE_FORCE_RADIUS: i32 = 3; // Grid "radius" for the hue force
-const HOLE_SIZE: Real = 0.3;
+const HOLE_SIZE: Real = 0.05;
 const DONUT_SIZE: Real = 1.0;
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ impl Simulation {
     pub fn new(cell_size: Real) -> Self {
         let grid = Grid::new(cell_size, GRID_DEPTH);
         Self {
-            pcls: Arc::new(Particles::new(1)),
+            pcls: Arc::new(Particles::new(60_000)),
             grid: Arc::new(grid),
         }
     }
@@ -216,7 +216,7 @@ impl Simulation {
 
     pub fn add_particle(&mut self, x: Real, y: Real, hue: Real) {
         let index = Arc::get_mut(&mut self.pcls).unwrap().push((x, y, hue));
-        self.grid.try_insert(index, x, y);
+        self.grid.try_insert(&self.pcls, index, x, y);
     }
 
     pub fn clear(&mut self) {
