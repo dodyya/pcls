@@ -1,5 +1,5 @@
 use crate::render::Renderer;
-use crate::sim::Simulation;
+use crate::sim::{PARTICLE_RADIUS, Simulation};
 use crate::types::Real;
 use glutin::{
     config::ConfigTemplateBuilder,
@@ -23,10 +23,8 @@ use winit::{
     window::Window,
 };
 
-const MAX_PARTICLE_SIZE: Real = 1. / 256.;
 const PARTICLES_ON_CLICK: usize = 250;
 const WINDOW_SIZE: u32 = 1500;
-const PDENSITY: Real = 1.0;
 
 pub struct App {
     vis: Option<Visualization>,
@@ -128,8 +126,9 @@ impl Visualization {
         };
         let renderer = Renderer::new(gl);
 
+
         Self {
-            sim: Simulation::new(MAX_PARTICLE_SIZE * 2.0),
+            sim: Simulation::new(PARTICLE_RADIUS * 2.0),
             st: SimState::new(),
             gl_context,
             gl_surface,
@@ -268,10 +267,9 @@ fn add_particles(cursor_x: Real, cursor_y: Real, sim: &mut Simulation, rng: &mut
     let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as Real) * 2.0;
 
     for _ in 0..PARTICLES_ON_CLICK {
+        let hue: Real = rng.gen_range(0.0..1.0);
         let dx: Real = rng.gen_range(-0.2..0.2);
         let dy: Real = rng.gen_range(-0.2..0.2);
-        let r = MAX_PARTICLE_SIZE;
-        let hue: Real = rng.gen_range(0.0..1.0);
-        sim.add_particle(sim_x + dx, sim_y + dy, r, PDENSITY * r * r, hue);
+        sim.add_particle(sim_x + dx, sim_y + dy, hue);
     }
 }
