@@ -177,13 +177,7 @@ impl Simulation {
         }
     }
 
-    fn hue_force_column(
-        i: usize,
-        c: usize,
-        grid: &Grid,
-        pcls: &Particles,
-        accum: &mut [(Real, Real)],
-    ) {
+    fn hue_force_column(i: usize, c: usize, grid: &Grid, pcls: &Particles) {
         let mut neigh: Vec<&[MaybeID]> = Vec::with_capacity(24);
 
         for j in (0..c).rev() {
@@ -195,12 +189,12 @@ impl Simulation {
 
                 for ids in &neigh {
                     for out_id in (*ids).iter().take_while(|x| x.is_some()) {
-                        Self::hue_force(pcls, accum, in_val, out_id.unchecked_id());
+                        Self::hue_force(pcls, in_val, out_id.unchecked_id());
                     }
                 }
 
                 for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
-                    Self::hue_force(pcls, accum, in_val, other_id.unchecked_id());
+                    Self::hue_force(pcls, in_val, other_id.unchecked_id());
                 }
             }
         }
@@ -252,37 +246,23 @@ impl Simulation {
         }
     }
 
+    // Direct atomic fetch_add (in `hue_force`) beats the per-thread Vec<(f32,f32)>
+    // accumulator + reduce. Bench: donut, gravity-down, hue on, 12 substeps/step,
+    // 60 measured steps after 40 warmup, best-of-3, total ms/step:
+    //   N      accum    noaccum   Δ
+    //   1000   3.98     3.67     −7.8%
+    //   3000   4.97     4.43    −10.8%
+    //   6000   6.79     5.63    −17.2%
+    //   10000  9.70     7.30    −24.7%
+    // The accumulator allocates `n` (Real,Real) pairs per rayon worker per call
+    // and then reduces ~n*workers entries; that grows with N while atomic
+    // contention is bounded by HUE_FORCE_RADIUS=3 (only a few adjacent columns
+    // can race on any given particle, and fetch_add on x86 is one locked op).
     pub fn apply_hue_force(grid: &Grid, pcls: &Particles) {
         let c = grid.cell_count;
-        let n = pcls.count;
-
-        // Each rayon worker folds into a thread-local plain accumulator
-        // (no atomics on the hot path); the per-thread buffers are then
-        // reduced and applied to the canonical axs/ays once.
-        let totals = (0..c)
-            .into_par_iter()
-            .fold(
-                || vec![(0.0 as Real, 0.0 as Real); n],
-                |mut local, col| {
-                    Self::hue_force_column(col, c, grid, pcls, &mut local);
-                    local
-                },
-            )
-            .reduce(
-                || vec![(0.0 as Real, 0.0 as Real); n],
-                |mut a, b| {
-                    for k in 0..n {
-                        a[k].0 += b[k].0;
-                        a[k].1 += b[k].1;
-                    }
-                    a
-                },
-            );
-
-        for k in 0..n {
-            pcls.add_ax(k, totals[k].0);
-            pcls.add_ay(k, totals[k].1);
-        }
+        (0..c).into_par_iter().for_each(|col| {
+            Self::hue_force_column(col, c, grid, pcls);
+        });
     }
 
     fn overlap(p: &Particles, i: usize, j: usize) {
@@ -320,7 +300,7 @@ impl Simulation {
 
     // Hue-force: like-hues attract, opposite hues (Δh = 0.5) repel; neutral at Δh = 0.25.
     // `-cos(2π · Δh)` is naturally periodic in hue, so wrap-around is free.
-    fn hue_force(p: &Particles, accum: &mut [(Real, Real)], i: usize, j: usize) {
+    fn hue_force(p: &Particles, i: usize, j: usize) {
         let xi = p.get_x(i);
         let yi = p.get_y(i);
         let hi = p.get_hue(i);
@@ -348,12 +328,10 @@ impl Simulation {
         let fx = force * dx / distance;
         let fy = force * dy / distance;
 
-        // Plain += into a thread-local accumulator — apply_hue_force reduces
-        // the per-thread buffers and folds them into the canonical axs/ays.
-        accum[i].0 += fx / PARTICLE_MASS;
-        accum[i].1 += fy / PARTICLE_MASS;
-        accum[j].0 -= fx / PARTICLE_MASS;
-        accum[j].1 -= fy / PARTICLE_MASS;
+        p.add_ax(i, fx / PARTICLE_MASS);
+        p.add_ay(i, fy / PARTICLE_MASS);
+        p.add_ax(j, -fx / PARTICLE_MASS);
+        p.add_ay(j, -fy / PARTICLE_MASS);
     }
 
     pub fn verlet(p: &Particles, dt: Real) {
