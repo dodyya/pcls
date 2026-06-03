@@ -1,5 +1,10 @@
 use crate::types::{AtomicReal, Real};
 use std::sync::atomic::Ordering::Relaxed as O;
+use std::sync::atomic::AtomicUsize;
+
+// Sentinel for "this particle is not currently registered in any grid cell".
+// Stored in cell_xs (cell_ys is irrelevant when unregistered).
+pub const CELL_UNREGISTERED: usize = usize::MAX;
 
 // SoA: one Vec per field so sequential reads (e.g. all xs) coalesce in cache
 // instead of striding through a 7-atomic struct.
@@ -12,6 +17,11 @@ pub struct Particles {
     pub axs: Vec<AtomicReal>,
     pub ays: Vec<AtomicReal>,
     pub hues: Vec<AtomicReal>,
+    // Grid cell each particle is currently registered in. CELL_UNREGISTERED
+    // means "not in the grid right now" (e.g. fresh particle pre-insert, or
+    // last insert hit a full cell).
+    pub cell_xs: Vec<AtomicUsize>,
+    pub cell_ys: Vec<AtomicUsize>,
     pub count: usize,
     pub g_toward_center: bool,
     pub hue_force_enabled: bool,
@@ -28,6 +38,8 @@ impl Particles {
             axs: Vec::with_capacity(capacity),
             ays: Vec::with_capacity(capacity),
             hues: Vec::with_capacity(capacity),
+            cell_xs: Vec::with_capacity(capacity),
+            cell_ys: Vec::with_capacity(capacity),
             count: 0,
             g_toward_center: false,
             hue_force_enabled: false,
@@ -43,6 +55,8 @@ impl Particles {
         self.axs.clear();
         self.ays.clear();
         self.hues.clear();
+        self.cell_xs.clear();
+        self.cell_ys.clear();
         self.count = 0;
     }
 
@@ -55,6 +69,8 @@ impl Particles {
         self.axs.push(AtomicReal::new(0.0));
         self.ays.push(AtomicReal::new(0.0));
         self.hues.push(AtomicReal::new(hue));
+        self.cell_xs.push(AtomicUsize::new(CELL_UNREGISTERED));
+        self.cell_ys.push(AtomicUsize::new(0));
         self.count += 1;
         self.count - 1
     }
@@ -106,6 +122,18 @@ impl Particles {
     }
     pub fn add_ay(&self, i: usize, delta: Real) {
         self.ays[i].fetch_add(delta, O);
+    }
+
+    // Currently-registered grid cell, or CELL_UNREGISTERED if not in the grid.
+    pub fn get_cell(&self, i: usize) -> (usize, usize) {
+        (self.cell_xs[i].load(O), self.cell_ys[i].load(O))
+    }
+    pub fn set_cell(&self, i: usize, cell: (usize, usize)) {
+        self.cell_xs[i].store(cell.0, O);
+        self.cell_ys[i].store(cell.1, O);
+    }
+    pub fn set_cell_unregistered(&self, i: usize) {
+        self.cell_xs[i].store(CELL_UNREGISTERED, O);
     }
 
     pub fn get_drawable(&self) -> impl Iterator<Item = (Real, Real, Real)> + '_ {
