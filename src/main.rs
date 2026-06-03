@@ -35,6 +35,10 @@ fn bench() {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut sim = Simulation::new(PARTICLE_RADIUS * 2.0);
 
+    if std::env::var("BENCH_HUE").is_ok() {
+        sim.toggle_hue_force();
+    }
+
     // Default donut mode is on; seed an annulus that fits between hole and rim.
     for _ in 0..n {
         let theta: Real = rng.gen_range(0.0..TAU);
