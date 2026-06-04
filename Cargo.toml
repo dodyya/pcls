@@ -6,12 +6,13 @@ edition = "2024"
 [dependencies]
 winit = { version = "0.30", features = ["rwh_06"] }
 rand = "0.8"
-rayon = "1.10.0"
 glow = "0.17"
 glutin = "0.32"
 glutin-winit = "0.5"
 raw-window-handle = "0.6"
-atomic_float = "1.1.0"
+cuda-core = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "d22af5f29738fce099ae38262faa7ab59828865f" }
+cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "d22af5f29738fce099ae38262faa7ab59828865f" }
+cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "d22af5f29738fce099ae38262faa7ab59828865f" }
 
 [profile.release]
 debug = true

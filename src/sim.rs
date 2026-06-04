@@ -1,46 +1,353 @@
-use crate::grid::Grid;
-use crate::maybe_id::MaybeID;
-use crate::particles::Particles;
-use crate::types::{Real, TAU};
-use rand::Rng;
-use rayon::prelude::*;
+use crate::device_view::DeviceView;
+use crate::gl_interop::ParticleVbo;
+use crate::kernels::kernels as gpu;
+use crate::particles::{Particles, RawParticle, XyHue};
+use crate::types::Real;
+use cuda_core::error::DriverError;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
 use std::sync::Arc;
 
-pub const PARTICLE_RADIUS: Real = 1.0 / 300.0;
-const PARTICLE_MASS: Real = 1.0;
+pub const PARTICLE_RADIUS: Real = 0.0021;
 
 const DT: Real = 1.0 / 60.0;
-const SUBSTEPS: usize = 12; // Substeps per step() call.
-const GRAVITY: Real = 1.0;
+const SUBSTEPS: usize = 12;
+pub const GRAVITY: Real = 1.0;
 
-const ANTI_BHOLE: Real = 0.5; // Avoid black holes at center in donut mode
-const RESTITUTION: Real = 0.5; // How hard particles bounce off each other, 0.0-1.0
-const MAX_V: Real = 0.0025; // Maximum velocity restriction
-const GRID_DEPTH: usize = 4; // Max. particles per grid cell to process. 3 is reasonable lower limit
-const VELOCITY_DAMPING: Real = 0.999999; // Velocity damping per Verlet step
-const K: Real = 300.*256.*PARTICLE_RADIUS;//*(1./256./PARTICLE_RADIUS); // Hue-force strength
-const HUE_FORCE_RADIUS: i32 = 3; // Grid "radius" for the hue force
-const HOLE_SIZE: Real = 0.05;
-const DONUT_SIZE: Real = 1.0;
+pub const ANTI_BHOLE: Real = 0.5; // Avoid black holes at center in donut mode
+pub const RESTITUTION: Real = 0.9999994;
+pub const MAX_V: Real = 0.0015;
+pub const MAX_OVERLAP_PUSH: Real = 2.0 * PARTICLE_RADIUS;
+pub const GRID_DEPTH: usize = 6;
+pub const VELOCITY_DAMPING: Real = 0.999999;
+pub const K: Real = 200. * 256. * PARTICLE_RADIUS;
+pub const HUE_FORCE_RADIUS: i32 = 7;
+pub const HOLE_SIZE: Real = 0.05;
+pub const DONUT_SIZE: Real = 1.0;
 
-#[derive(Debug)]
+// Diagnostic slots in the shared 8-slot u32 buffer. Bit-pattern atomic-max on
+// non-negative f32 (monotonic) is used for the *_MAG slots; *_FIRES slots are
+// straight u32 counters. Single source of truth shared with the kernel writers.
+pub const DIAG_OVL_MAG: usize = 0;
+pub const DIAG_OVL_FIRES: usize = 1;
+pub const DIAG_HUE_MAG: usize = 2;
+pub const DIAG_VRP_DISP: usize = 3;
+pub const DIAG_VRP_FIRES: usize = 4;
+pub const DIAG_VRP_VEL: usize = 5;
+pub const DIAG_CON_MAG: usize = 6;
+pub const DIAG_CON_FIRES: usize = 7;
+pub const DIAG_SLOTS: usize = 8;
+
 pub struct Simulation {
-    pub pcls: Arc<Particles>,
-    pub grid: Arc<Grid>,
+    pub pcls: Particles,
+    // Held to keep the CUDA context alive for the lifetime of all device buffers.
+    pub _ctx: Arc<CudaContext>,
+    pub stream: Arc<CudaStream>,
+    // Hot positions (x, y, hue): read by every kernel, written by constrain/overlap/verlet.
+    // Also the layout the VBO uses (extract_to_vbo just memcpy_dtod's this into the VBO).
+    pub device_pos: DeviceBuffer<XyHue>,
+    // Cold integration state (ox, oy, ax, ay): written by gravity/hue_force/verlet,
+    // read by verlet only.
+    pub device_integ: DeviceBuffer<RawParticle>,
+    // Grid: cells holds cell_count^2 * GRID_DEPTH particle ids; counters holds
+    // cell_count^2 per-cell slot counts (zeroed before each build).
+    pub grid_cells: DeviceBuffer<u32>,
+    pub grid_counters: DeviceBuffer<u32>,
+    pub cell_count: u32,
+    pub module: gpu::LoadedModule,
+    // Per-frame diagnostics; slot layout in DIAG_* consts above.
+    pub diag: DeviceBuffer<u32>,
+    // Lowest host-index whose particle hasn't been pushed to the device yet.
+    // add_particle leaves this at the previous count; sync_tail flushes [dirty_start..count].
+    dirty_start: usize,
 }
 
 impl Simulation {
     pub fn new(cell_size: Real) -> Self {
-        let grid = Grid::new(cell_size, GRID_DEPTH);
+        let ctx = CudaContext::new(0).expect("CUDA context");
+        // cuda-host's embedded loader uses CUDA_OXIDE_TARGET to pick the SM arch
+        // when compiling NVVM IR → cubin; sniff the actual device's capability.
+        if std::env::var_os("CUDA_OXIDE_TARGET").is_none() {
+            let (major, minor) = ctx.compute_capability().expect("compute cap");
+            // Safety: process init, single-threaded, no other readers of env yet.
+            unsafe {
+                std::env::set_var("CUDA_OXIDE_TARGET", format!("sm_{}{}", major, minor));
+            }
+        }
+        let stream = ctx.default_stream();
+        let module = gpu::load(&ctx).expect("load embedded kernels");
+
+        let cell_count = (2.0 / cell_size).ceil() as u32;
+        let cells_len = (cell_count as usize).pow(2) * GRID_DEPTH;
+        let counters_len = (cell_count as usize).pow(2);
+        let grid_cells = DeviceBuffer::zeroed(&stream, cells_len).expect("alloc grid cells");
+        let grid_counters =
+            DeviceBuffer::zeroed(&stream, counters_len).expect("alloc grid counters");
+        let device_pos =
+            DeviceBuffer::zeroed(&stream, 64).expect("alloc initial device positions");
+        let device_integ =
+            DeviceBuffer::zeroed(&stream, 64).expect("alloc initial device integ");
+        let diag = DeviceBuffer::zeroed(&stream, DIAG_SLOTS).expect("alloc diag");
+
         Self {
-            pcls: Arc::new(Particles::new(60_000)),
-            grid: Arc::new(grid),
+            pcls: Particles::new(60_000),
+            _ctx: ctx,
+            stream,
+            device_pos,
+            device_integ,
+            grid_cells,
+            grid_counters,
+            cell_count,
+            module,
+            diag,
+            dirty_start: 0,
         }
     }
+
+    fn reset_diag(&self) {
+        let bytes = self.diag.len() * size_of::<u32>();
+        // Safety: `self.diag` owns the device allocation; size is its true byte length.
+        unsafe {
+            cuda_core::memory::memset_d8_async(
+                self.diag.cu_deviceptr(),
+                0,
+                bytes,
+                self.stream.cu_stream(),
+            )
+            .expect("memset diag");
+        }
+    }
+
+    fn read_diag(&self) -> [u32; DIAG_SLOTS] {
+        let mut buf = [0u32; DIAG_SLOTS];
+        self.diag
+            .copy_to_host(&self.stream, &mut buf)
+            .expect("copy diag to host");
+        buf
+    }
+
+    // Push freshly-added particles [dirty_start..count] from the host mirror to both
+    // device buffers. Runs at the top of step(); typically a no-op since add_particle
+    // is rare.
+    fn sync_tail(&mut self) -> Result<(), DriverError> {
+        if self.dirty_start >= self.pcls.count {
+            return Ok(());
+        }
+        let start = self.dirty_start;
+        let n = self.pcls.count - start;
+        let pos_bytes = size_of::<XyHue>();
+        let integ_bytes = size_of::<RawParticle>();
+        let pos_dst = self.device_pos.cu_deviceptr() + (start * pos_bytes) as u64;
+        let integ_dst = self.device_integ.cu_deviceptr() + (start * integ_bytes) as u64;
+        // Safety: device buffers have cap ≥ count (grow ensures this); host slices
+        // [start..start+n] are in bounds; copy sizes match.
+        unsafe {
+            cuda_core::memory::memcpy_htod_async(
+                pos_dst,
+                self.pcls.positions.as_ptr().add(start),
+                n * pos_bytes,
+                self.stream.cu_stream(),
+            )?;
+            cuda_core::memory::memcpy_htod_async(
+                integ_dst,
+                self.pcls.integs.as_ptr().add(start),
+                n * integ_bytes,
+                self.stream.cu_stream(),
+            )?;
+        }
+        self.stream.synchronize()?;
+        self.dirty_start = self.pcls.count;
+        Ok(())
+    }
+
+    // Grow the sim's device buffers to at least `new_cap`. Preserves [0..pcls.count]
+    // by pulling the device-synced prefix back into the host mirrors, then re-uploading.
+    //
+    // Only [0..dirty_start] is dtoh'd: anything past dirty_start on the host is freshly
+    // added by add_particle and hasn't been uploaded yet, so dtoh would clobber real host
+    // data with stale device padding (zero positions, hue 0 = red).
+    fn grow_device(&mut self, new_cap: usize) {
+        let synced_len = self.dirty_start.min(self.device_pos.len());
+        if synced_len > 0 {
+            // Safety: device buffers have cap ≥ synced_len; host vectors already cover
+            // [0..count] ≥ [0..synced_len] (push() grew them), so the writes are in bounds.
+            unsafe {
+                cuda_core::memory::memcpy_dtoh_async(
+                    self.pcls.positions.as_mut_ptr(),
+                    self.device_pos.cu_deviceptr(),
+                    synced_len * size_of::<XyHue>(),
+                    self.stream.cu_stream(),
+                )
+                .expect("memcpy positions dtoh on grow");
+                cuda_core::memory::memcpy_dtoh_async(
+                    self.pcls.integs.as_mut_ptr(),
+                    self.device_integ.cu_deviceptr(),
+                    synced_len * size_of::<RawParticle>(),
+                    self.stream.cu_stream(),
+                )
+                .expect("memcpy integs dtoh on grow");
+            }
+            self.stream.synchronize().expect("sync after grow dtoh");
+        }
+        let mut padded_pos = self.pcls.positions.clone();
+        padded_pos.resize(new_cap, XyHue::default());
+        let mut padded_integ = self.pcls.integs.clone();
+        padded_integ.resize(new_cap, RawParticle::default());
+        self.device_pos =
+            DeviceBuffer::from_host(&self.stream, &padded_pos).expect("grow device_pos");
+        self.device_integ =
+            DeviceBuffer::from_host(&self.stream, &padded_integ).expect("grow device_integ");
+        self.dirty_start = self.pcls.count;
+    }
+
+    fn reset_counters(&self) {
+        let bytes = self.grid_counters.len() * size_of::<u32>();
+        // Safety: `self.grid_counters` owns the device allocation; size matches.
+        unsafe {
+            cuda_core::memory::memset_d8_async(
+                self.grid_counters.cu_deviceptr(),
+                0,
+                bytes,
+                self.stream.cu_stream(),
+            )
+            .expect("memset grid counters");
+        }
+    }
+
+    fn pos_view(&self, n: usize) -> DeviceView<'_, XyHue> {
+        DeviceView::from_buffer(&self.device_pos, n)
+    }
+
+    fn integ_view(&self, n: usize) -> DeviceView<'_, RawParticle> {
+        DeviceView::from_buffer(&self.device_integ, n)
+    }
+
+    fn build_grid(&mut self) {
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
+        }
+        self.reset_counters();
+        let pos_view = self.pos_view(n);
+        // Safety: cells is written at slot indices given by the atomic counter — disjoint per
+        // thread; sizing matches cell_count^2 * GRID_DEPTH.
+        unsafe {
+            self.module
+                .grid_build(
+                    &self.stream,
+                    LaunchConfig::for_num_elems(n as u32),
+                    &pos_view,
+                    self.grid_cells.cu_deviceptr() as *mut u32,
+                    &self.grid_counters,
+                    self.cell_count,
+                )
+                .expect("grid_build kernel");
+        }
+    }
+
+    fn launch_gravity(&mut self) {
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
+        }
+        let g = self.pcls.g_toward_center as u32;
+        let pos_view = self.pos_view(n);
+        let mut integ_view = self.integ_view(n);
+        self.module
+            .gravity(
+                &self.stream,
+                LaunchConfig::for_num_elems(n as u32),
+                &pos_view,
+                &mut integ_view,
+                g,
+            )
+            .expect("gravity kernel");
+    }
+
+    fn launch_constrain(&mut self) {
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
+        }
+        let d = self.pcls.donut_enabled as u32;
+        let mut pos_view = self.pos_view(n);
+        self.module
+            .constrain(
+                &self.stream,
+                LaunchConfig::for_num_elems(n as u32),
+                &mut pos_view,
+                d,
+                &self.diag,
+            )
+            .expect("constrain kernel");
+    }
+
+    fn launch_verlet(&mut self, dt: Real) {
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
+        }
+        let mut pos_view = self.pos_view(n);
+        let mut integ_view = self.integ_view(n);
+        self.module
+            .verlet(
+                &self.stream,
+                LaunchConfig::for_num_elems(n as u32),
+                &mut pos_view,
+                &mut integ_view,
+                dt,
+                &self.diag,
+            )
+            .expect("verlet kernel");
+    }
+
+    fn launch_hue_force(&mut self) {
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
+        }
+        let pos_view = self.pos_view(n);
+        let mut integ_view = self.integ_view(n);
+        self.module
+            .hue_force(
+                &self.stream,
+                LaunchConfig::for_num_elems(n as u32),
+                &pos_view,
+                &mut integ_view,
+                &self.grid_cells,
+                &self.grid_counters,
+                self.cell_count,
+                &self.diag,
+            )
+            .expect("hue_force kernel");
+    }
+
+    fn launch_overlap(&mut self) {
+        let n = self.pcls.count as u32;
+        if n == 0 {
+            return;
+        }
+        // Safety: positions aliases reads of neighbours' x/y with writes to own x/y;
+        // the race is intentional iterative refinement — see kernel comment.
+        unsafe {
+            self.module
+                .overlap(
+                    &self.stream,
+                    LaunchConfig::for_num_elems(n),
+                    self.device_pos.cu_deviceptr() as *mut XyHue,
+                    &self.grid_cells,
+                    &self.grid_counters,
+                    self.cell_count,
+                    n,
+                    &self.diag,
+                )
+                .expect("overlap kernel");
+        }
+    }
+
     pub fn step(&mut self) {
-        // BENCH: per-phase timing, accumulated across all substeps, printed every 60 frames.
-        // Remove this block to restore the plain loop.
-        use std::sync::atomic::{AtomicU64, Ordering::Relaxed as R};
+        // PCLS_DEBUG path syncs after each launch so per-kernel timings are meaningful;
+        // prod path enqueues the whole substep async.
+        use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed as R};
         use std::time::Instant;
         static FRAMES: AtomicU64 = AtomicU64::new(0);
         static T_GRAV: AtomicU64 = AtomicU64::new(0);
@@ -49,36 +356,98 @@ impl Simulation {
         static T_GRID: AtomicU64 = AtomicU64::new(0);
         static T_OVL: AtomicU64 = AtomicU64::new(0);
         static T_VER: AtomicU64 = AtomicU64::new(0);
+        static D_OVL_MAG: AtomicU32 = AtomicU32::new(0);
+        static D_OVL_FIRES: AtomicU64 = AtomicU64::new(0);
+        static D_HUE_MAG: AtomicU32 = AtomicU32::new(0);
+        static D_VRP_DISP: AtomicU32 = AtomicU32::new(0);
+        static D_VRP_FIRES: AtomicU64 = AtomicU64::new(0);
+        static D_VRP_VEL: AtomicU32 = AtomicU32::new(0);
+        static D_CON_MAG: AtomicU32 = AtomicU32::new(0);
+        static D_CON_FIRES: AtomicU64 = AtomicU64::new(0);
+
+        static DEBUG: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| std::env::var_os("PCLS_DEBUG").is_some());
+
+        self.sync_tail().expect("htod tail");
+        self.reset_diag();
+
+        let hue_on = self.pcls.hue_force_enabled;
+        let debug = *DEBUG;
 
         for i in 0..SUBSTEPS {
-            let t0 = Instant::now();
-            Self::apply_gravity(&self.pcls);
-            let t1 = Instant::now();
-            if self.pcls.hue_force_enabled && i%4==0 {
-                Self::apply_hue_force(&self.grid, &self.pcls);
+            if debug {
+                let sync = |s: &CudaStream| s.synchronize().expect("phase sync");
+                let t_pre_grid = Instant::now();
+                self.build_grid();
+                sync(&self.stream);
+                let t_post_grid = Instant::now();
+
+                self.launch_gravity();
+                sync(&self.stream);
+                let t1 = Instant::now();
+                if hue_on && i % 4 == 0 {
+                    self.launch_hue_force();
+                    sync(&self.stream);
+                }
+                let t2 = Instant::now();
+                self.launch_constrain();
+                sync(&self.stream);
+                let t3 = Instant::now();
+
+                self.build_grid();
+                sync(&self.stream);
+                let t4 = Instant::now();
+
+                self.launch_overlap();
+                sync(&self.stream);
+                let t5 = Instant::now();
+                self.launch_verlet(DT / SUBSTEPS as Real);
+                sync(&self.stream);
+                let t6 = Instant::now();
+
+                T_GRAV.fetch_add((t1 - t_post_grid).as_nanos() as u64, R);
+                T_HUE.fetch_add((t2 - t1).as_nanos() as u64, R);
+                T_CON.fetch_add((t3 - t2).as_nanos() as u64, R);
+                T_GRID.fetch_add(
+                    ((t_post_grid - t_pre_grid) + (t4 - t3)).as_nanos() as u64,
+                    R,
+                );
+                T_OVL.fetch_add((t5 - t4).as_nanos() as u64, R);
+                T_VER.fetch_add((t6 - t5).as_nanos() as u64, R);
+            } else {
+                self.build_grid();
+                self.launch_gravity();
+                if hue_on && i % 4 == 0 {
+                    self.launch_hue_force();
+                }
+                self.launch_constrain();
+                self.build_grid();
+                self.launch_overlap();
+                self.launch_verlet(DT / SUBSTEPS as Real);
             }
-            let t2 = Instant::now();
-            Self::constrain(&self.pcls);
-            let t3 = Instant::now();
-            self.grid.update(&self.pcls);
-            let t4 = Instant::now();
-            Self::resolve_overlaps(&self.grid, &self.pcls);
-            let t5 = Instant::now();
-            Self::verlet(&self.pcls, DT / SUBSTEPS as Real);
-            let t6 = Instant::now();
-            T_GRAV.fetch_add((t1 - t0).as_nanos() as u64, R);
-            T_HUE.fetch_add((t2 - t1).as_nanos() as u64, R);
-            T_CON.fetch_add((t3 - t2).as_nanos() as u64, R);
-            T_GRID.fetch_add((t4 - t3).as_nanos() as u64, R);
-            T_OVL.fetch_add((t5 - t4).as_nanos() as u64, R);
-            T_VER.fetch_add((t6 - t5).as_nanos() as u64, R);
         }
 
+        let d = self.read_diag();
+        // Bit-pattern atomic-max is monotonic for non-negative f32, which all magnitude slots are.
+        D_OVL_MAG.fetch_max(d[DIAG_OVL_MAG], R);
+        D_OVL_FIRES.fetch_add(d[DIAG_OVL_FIRES] as u64, R);
+        D_HUE_MAG.fetch_max(d[DIAG_HUE_MAG], R);
+        D_VRP_DISP.fetch_max(d[DIAG_VRP_DISP], R);
+        D_VRP_FIRES.fetch_add(d[DIAG_VRP_FIRES] as u64, R);
+        D_VRP_VEL.fetch_max(d[DIAG_VRP_VEL], R);
+        D_CON_MAG.fetch_max(d[DIAG_CON_MAG], R);
+        D_CON_FIRES.fetch_add(d[DIAG_CON_FIRES] as u64, R);
+
         let n = FRAMES.fetch_add(1, R) + 1;
-        if n % 60 == 0 {
-            // Wall-clock FPS over the last 60-frame window (includes render+swap,
-            // not just the sim phases below) so framerate drops show up here.
+        if debug && n.is_multiple_of(60) {
             static LAST_PRINT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+            static P_GRAV: AtomicU64 = AtomicU64::new(0);
+            static P_HUE: AtomicU64 = AtomicU64::new(0);
+            static P_CON: AtomicU64 = AtomicU64::new(0);
+            static P_GRID: AtomicU64 = AtomicU64::new(0);
+            static P_OVL: AtomicU64 = AtomicU64::new(0);
+            static P_VER: AtomicU64 = AtomicU64::new(0);
+
             let now = Instant::now();
             let fps = {
                 let mut lp = LAST_PRINT.lock().unwrap();
@@ -86,122 +455,70 @@ impl Simulation {
                 *lp = Some(now);
                 fps
             };
-            let f = (n * SUBSTEPS as u64) as f64 * 1000.0; // ns→µs / substep avg
+            let win = (60 * SUBSTEPS as u64) as f64 * 1000.0;
+            let delta = |prev: &AtomicU64, cur: &AtomicU64| {
+                let now = cur.load(R);
+                let was = prev.swap(now, R);
+                (now - was) as f64 / win
+            };
             eprintln!(
-                "[sim n={:>5} pcls f={:>4}] fps={:>5.1} grav={:>5.1} hue={:>6.1} con={:>5.1} grid={:>5.1} ovl={:>6.1} ver={:>5.1}   (µs/substep avg, hue on={})",
+                "[sim n={:>5} pcls f={:>4}] fps={:>5.1} grav={:>5.1} hue={:>6.1} con={:>5.1} grid={:>5.1} ovl={:>6.1} ver={:>5.1}   (µs/substep, last 60 frames, hue on={})",
                 self.pcls.count,
                 n,
                 fps,
-                T_GRAV.load(R) as f64 / f,
-                T_HUE.load(R) as f64 / f,
-                T_CON.load(R) as f64 / f,
-                T_GRID.load(R) as f64 / f,
-                T_OVL.load(R) as f64 / f,
-                T_VER.load(R) as f64 / f,
+                delta(&P_GRAV, &T_GRAV),
+                delta(&P_HUE, &T_HUE),
+                delta(&P_CON, &T_CON),
+                delta(&P_GRID, &T_GRID),
+                delta(&P_OVL, &T_OVL),
+                delta(&P_VER, &T_VER),
                 self.pcls.hue_force_enabled,
+            );
+            let dec = |a: &AtomicU32| f32::from_bits(a.swap(0, R));
+            let ovl_fires = D_OVL_FIRES.swap(0, R);
+            let vrp_fires = D_VRP_FIRES.swap(0, R);
+            let con_fires = D_CON_FIRES.swap(0, R);
+            eprintln!(
+                "[diag] overlap_pre_cap_max={:.5} overlap_cap_fires={} hue_force_max={:.5} verlet_pre_clamp_max={:.5} verlet_clamp_fires={} carried_v_max={:.5} constrain_shove_max={:.5} constrain_big_shoves={}    (caps MAX_OVERLAP_PUSH={:.5} MAX_V={:.5})",
+                dec(&D_OVL_MAG),
+                ovl_fires,
+                dec(&D_HUE_MAG),
+                dec(&D_VRP_DISP),
+                vrp_fires,
+                dec(&D_VRP_VEL),
+                dec(&D_CON_MAG),
+                con_fires,
+                MAX_OVERLAP_PUSH,
+                MAX_V,
             );
         }
     }
 
-    pub fn resolve_overlaps(grid: &Grid, pcls: &Particles) {
-        let c = grid.cell_count;
-        // Two passes (even/odd columns) so parallel tasks don't write to adjacent columns
-        (0..(c + 1) / 2).into_par_iter().for_each(|half_i| {
-            Self::overlap_column(half_i * 2, c, grid, pcls);
-        });
-        (0..c / 2).into_par_iter().for_each(|half_i| {
-            Self::overlap_column(half_i * 2 + 1, c, grid, pcls);
-        });
-    }
-
-    fn neighbors<'a>(out: &mut Vec<&'a [MaybeID]>, grid: &'a Grid, i: usize, j: usize, c: usize) {
-        out.clear();
-        if i > 0 && j + 1 < c {
-            out.push(&grid.map[(i - 1, j + 1)]);
+    // Copy the current device positions into the GL-mapped VBO. Positions are already
+    // XyHue-shaped (same layout the VAO binds to), so this is a single device-to-device
+    // memcpy — no per-thread kernel needed. Caller must grow the VBO to fit pcls.count.
+    pub fn extract_to_vbo(&mut self, vbo: &mut ParticleVbo) -> Result<(), DriverError> {
+        let n = self.pcls.count;
+        if n == 0 {
+            return Ok(());
         }
-        if i + 1 < c {
-            out.push(&grid.map[(i + 1, j)]);
+        assert!(n <= vbo.cap);
+        let dst = vbo.map(&self.stream)?;
+        let bytes = n * size_of::<XyHue>();
+        // Safety: `dst` is the VBO's CUDA-mapped pointer (valid until vbo.unmap), the
+        // source is our typed positions buffer with len ≥ n, both in the same context.
+        unsafe {
+            cuda_core::memory::memcpy_dtod_async(
+                dst,
+                self.device_pos.cu_deviceptr(),
+                bytes,
+                self.stream.cu_stream(),
+            )?;
         }
-        if j + 1 < c {
-            out.push(&grid.map[(i, j + 1)]);
-        }
-        if i + 1 < c && j + 1 < c {
-            out.push(&grid.map[(i + 1, j + 1)]);
-        }
-    }
-
-    fn hue_force_neighbors<'a>(
-        out: &mut Vec<&'a [MaybeID]>,
-        grid: &'a Grid,
-        i: usize,
-        j: usize,
-        c: usize,
-    ) {
-        out.clear();
-        // Forward-only half-plane (same pattern as `neighbors`, scaled to radius)
-        // so each cross-cell pair is visited exactly once.
-        for di in -HUE_FORCE_RADIUS..=HUE_FORCE_RADIUS {
-            for dj in -HUE_FORCE_RADIUS..=HUE_FORCE_RADIUS {
-                if !(dj > 0 || (dj == 0 && di > 0)) {
-                    continue;
-                }
-                let ni = i as i32 + di;
-                let nj = j as i32 + dj;
-                if ni >= 0 && ni < c as i32 && nj >= 0 && nj < c as i32 {
-                    out.push(&grid.map[(ni as usize, nj as usize)]);
-                }
-            }
-        }
-    }
-
-    fn overlap_column(i: usize, c: usize, grid: &Grid, pcls: &Particles) {
-        let mut neigh: Vec<&[MaybeID]> = Vec::with_capacity(4);
-
-        for j in (0..c).rev() {
-            let inner = &grid.map[(i, j)];
-            Self::neighbors(&mut neigh, grid, i, j, c);
-
-            for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
-                let in_val = in_id.unchecked_id();
-
-                for ids in &neigh {
-                    for out_id in (*ids).iter().take_while(|x| x.is_some()) {
-                        Self::overlap(pcls, in_val, out_id.unchecked_id());
-                    }
-                }
-
-                for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
-                    Self::overlap(pcls, in_val, other_id.unchecked_id());
-                }
-            }
-        }
-    }
-
-    fn hue_force_column(i: usize, c: usize, grid: &Grid, pcls: &Particles) {
-        let mut neigh: Vec<&[MaybeID]> = Vec::with_capacity(24);
-
-        for j in (0..c).rev() {
-            let inner = &grid.map[(i, j)];
-            Self::hue_force_neighbors(&mut neigh, grid, i, j, c);
-
-            for (idx, in_id) in inner.iter().take_while(|x| x.is_some()).enumerate() {
-                let in_val = in_id.unchecked_id();
-
-                for ids in &neigh {
-                    for out_id in (*ids).iter().take_while(|x| x.is_some()) {
-                        Self::hue_force(pcls, in_val, out_id.unchecked_id());
-                    }
-                }
-
-                for other_id in inner.iter().skip(idx + 1).take_while(|x| x.is_some()) {
-                    Self::hue_force(pcls, in_val, other_id.unchecked_id());
-                }
-            }
-        }
-    }
-
-    pub fn get_drawable(&self) -> impl Iterator<Item = (Real, Real, Real)> + '_ {
-        self.pcls.get_drawable()
+        // Sync before unmap so GL sees CUDA's writes when it next binds the VBO.
+        self.stream.synchronize()?;
+        vbo.unmap(&self.stream)?;
+        Ok(())
     }
 
     pub fn is_hue_force_enabled(&self) -> bool {
@@ -209,181 +526,43 @@ impl Simulation {
     }
 
     pub fn add_particle(&mut self, x: Real, y: Real, hue: Real) {
-        let index = Arc::get_mut(&mut self.pcls).unwrap().push((x, y, hue));
-        self.grid.try_insert(&self.pcls, index, x, y);
+        self.pcls.push(x, y, hue);
+        if self.pcls.count > self.device_pos.len() {
+            self.grow_device(self.pcls.count.next_power_of_two().max(64));
+        }
     }
 
     pub fn clear(&mut self) {
-        Arc::get_mut(&mut self.pcls).unwrap().clear();
-        self.grid.map.clear();
+        self.pcls.clear();
+        self.dirty_start = 0;
     }
 
     pub fn toggle_gravity(&mut self) {
-        Arc::get_mut(&mut self.pcls).unwrap().g_toward_center = !self.pcls.g_toward_center;
+        self.pcls.g_toward_center = !self.pcls.g_toward_center;
     }
 
     pub fn toggle_hue_force(&mut self) {
-        Arc::get_mut(&mut self.pcls).unwrap().hue_force_enabled = !self.pcls.hue_force_enabled;
+        self.pcls.hue_force_enabled = !self.pcls.hue_force_enabled;
     }
 
     pub fn toggle_donut(&mut self) {
-        Arc::get_mut(&mut self.pcls).unwrap().donut_enabled = !self.pcls.donut_enabled;
-    }
-
-    fn apply_gravity(p: &Particles) {
-        for i in 0..p.count {
-            if p.g_toward_center {
-                let x = p.get_x(i);
-                let y = p.get_y(i);
-                let r2 = x.abs().powi(2) + y.abs().powi(2);
-                let v_x = x / (r2.sqrt());
-                let v_y = y / (r2.sqrt());
-                p.set_ax(i, -GRAVITY * v_x * (1.0 / (r2 + ANTI_BHOLE)));
-                p.set_ay(i, -GRAVITY * v_y * (1.0 / (r2 + ANTI_BHOLE)));
-            } else {
-                p.set_ay(i, -GRAVITY);
-            }
-        }
-    }
-
-    // Direct atomic fetch_add (in `hue_force`) beats the per-thread Vec<(f32,f32)>
-    // accumulator + reduce. Bench: donut, gravity-down, hue on, 12 substeps/step,
-    // 60 measured steps after 40 warmup, best-of-3, total ms/step:
-    //   N      accum    noaccum   Δ
-    //   1000   3.98     3.67     −7.8%
-    //   3000   4.97     4.43    −10.8%
-    //   6000   6.79     5.63    −17.2%
-    //   10000  9.70     7.30    −24.7%
-    // The accumulator allocates `n` (Real,Real) pairs per rayon worker per call
-    // and then reduces ~n*workers entries; that grows with N while atomic
-    // contention is bounded by HUE_FORCE_RADIUS=3 (only a few adjacent columns
-    // can race on any given particle, and fetch_add on x86 is one locked op).
-    pub fn apply_hue_force(grid: &Grid, pcls: &Particles) {
-        let c = grid.cell_count;
-        (0..c).into_par_iter().for_each(|col| {
-            Self::hue_force_column(col, c, grid, pcls);
-        });
-    }
-
-    fn overlap(p: &Particles, i: usize, j: usize) {
-        let xi = p.get_x(i);
-        let yi = p.get_y(i);
-        let xj = p.get_x(j);
-        let yj = p.get_y(j);
-        let dx = xi - xj;
-        let dy = yi - yj;
-        let contact = 2.0 * PARTICLE_RADIUS;
-        let distance_sq = dx * dx + dy * dy;
-        if distance_sq > contact * contact {
-            return;
-        }
-
-        let distance = distance_sq.sqrt();
-        let overlap_distance = contact - distance;
-        let (normal_x, normal_y) = if distance != 0.0 {
-            (dx / distance, dy / distance)
-        } else {
-            let theta = rand::thread_rng().gen_range(0.0..TAU);
-            (theta.cos(), theta.sin())
-        };
-
-        // Equal masses → each particle takes half the correction.
-        let correction = RESTITUTION * overlap_distance * 0.25;
-        let correction_x = correction * normal_x;
-        let correction_y = correction * normal_y;
-
-        p.set_x(i, xi + correction_x);
-        p.set_y(i, yi + correction_y);
-        p.set_x(j, xj - correction_x);
-        p.set_y(j, yj - correction_y);
-    }
-
-    // Hue-force: like-hues attract, opposite hues (Δh = 0.5) repel; neutral at Δh = 0.25.
-    // `-cos(2π · Δh)` is naturally periodic in hue, so wrap-around is free.
-    fn hue_force(p: &Particles, i: usize, j: usize) {
-        let xi = p.get_x(i);
-        let yi = p.get_y(i);
-        let hi = p.get_hue(i);
-        let xj = p.get_x(j);
-        let yj = p.get_y(j);
-        let hj = p.get_hue(j);
-        let dx = xi - xj;
-        let dy = yi - yj;
-
-        let hue_dist = (hi - hj)
-            .abs()
-            .min((hi - hj - 1.).abs())
-            .min((hi - hj + 1.).abs());
-        // Linear: force ∝ (0.25 - hue_dist), negative (attract) for like-hues,
-        // positive (repel) for opposites, zero at quarter-turn. Amplitude is 0.25
-        // (vs 1.0 for the cos version) so K is effectively ~4× weaker here.
-        // Floor the distance at the contact distance: the 1/d² term is capped
-        // at the surface so force is K * factor at contact and can't keep
-        // growing as particles overlap.
-        let contact = 2.0 * PARTICLE_RADIUS;
-        let d2 = (dx * dx + dy * dy).max(contact * contact);
-        let force = K * (hue_dist - 0.25) * contact * contact / d2;
-        let distance = d2.sqrt();
-
-        let fx = force * dx / distance;
-        let fy = force * dy / distance;
-
-        p.add_ax(i, fx / PARTICLE_MASS);
-        p.add_ay(i, fy / PARTICLE_MASS);
-        p.add_ax(j, -fx / PARTICLE_MASS);
-        p.add_ay(j, -fy / PARTICLE_MASS);
-    }
-
-    pub fn verlet(p: &Particles, dt: Real) {
-        for i in 0..p.count {
-            let x = p.get_x(i);
-            let y = p.get_y(i);
-            let vx = (x - p.get_ox(i)) * VELOCITY_DAMPING;
-            let vy = (y - p.get_oy(i)) * VELOCITY_DAMPING;
-            p.set_ox(i, x);
-            p.set_oy(i, y);
-            p.set_x(i, x + (vx + p.get_ax(i) * dt * dt).clamp(-MAX_V, MAX_V));
-            p.set_y(i, y + (vy + p.get_ay(i) * dt * dt).clamp(-MAX_V, MAX_V));
-            p.set_ax(i, 0.0);
-            p.set_ay(i, 0.0);
-        }
-    }
-
-    pub fn constrain(p: &Particles) {
-        let r = PARTICLE_RADIUS;
-        for i in 0..p.count {
-            let x = p.get_x(i);
-            let y = p.get_y(i);
-            if p.donut_enabled {
-                let center_dist = (x * x + y * y).sqrt();
-                let factor = if center_dist + r > DONUT_SIZE {
-                    (DONUT_SIZE - r) / center_dist
-                } else if center_dist - r < HOLE_SIZE {
-                    (HOLE_SIZE + r) / center_dist
-                } else {
-                    1.0
-                };
-                p.set_x(i, x * factor);
-                p.set_y(i, y * factor);
-            } else {
-                if x + r > 1.0 {
-                    p.set_x(i, 1.0 - r);
-                } else if x - r < -1.0 {
-                    p.set_x(i, -1.0 + r);
-                }
-                if y + r > 1.0 {
-                    p.set_y(i, 1.0 - r);
-                } else if y - r < -1.0 {
-                    p.set_y(i, -1.0 + r);
-                }
-            }
-        }
+        self.pcls.donut_enabled = !self.pcls.donut_enabled;
     }
 
     pub fn stop(&mut self) {
-        for i in 0..self.pcls.count {
-            self.pcls.set_ox(i, self.pcls.get_x(i));
-            self.pcls.set_oy(i, self.pcls.get_y(i));
+        let n = self.pcls.count;
+        if n == 0 {
+            return;
         }
+        let pos_view = self.pos_view(n);
+        let mut integ_view = self.integ_view(n);
+        self.module
+            .zero_velocity(
+                &self.stream,
+                LaunchConfig::for_num_elems(n as u32),
+                &pos_view,
+                &mut integ_view,
+            )
+            .expect("zero_velocity kernel");
     }
 }

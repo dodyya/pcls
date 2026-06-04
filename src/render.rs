@@ -1,3 +1,4 @@
+use crate::gl_interop::ParticleVbo;
 use crate::sim::PARTICLE_RADIUS;
 use crate::types::Real;
 use glow::HasContext as _;
@@ -37,34 +38,36 @@ void main() {
 const FLOATS_PER_PARTICLE: usize = 3; // x, y, hue
 
 pub struct Renderer {
-    gl: glow::Context,
     program: glow::Program,
     vao: glow::VertexArray,
-    vbo: glow::Buffer,
     u_point_size: Option<glow::UniformLocation>,
     u_hue_force: Option<glow::UniformLocation>,
-    verts: Vec<f32>,
 }
 
 impl Renderer {
-    pub fn new(gl: glow::Context) -> Self {
-        // SAFETY: caller guarantees a GL context is current on this thread; every glow call
-        // below is a standard one-time setup (program, VAO/VBO, attrib pointers, uniforms).
+    // Binds the VAO's vertex attribute pointers to `vbo`. Caller guarantees the GL context
+    // is current; `vbo`'s GL name must outlive this Renderer.
+    pub fn new(gl: &glow::Context, vbo: &ParticleVbo) -> Self {
+        // Safety: caller guarantees a GL context is current on this thread.
         unsafe {
-            let program = link_program(&gl, VERTEX_SHADER, FRAGMENT_SHADER);
+            let program = link_program(gl, VERTEX_SHADER, FRAGMENT_SHADER);
 
             let vao = gl.create_vertex_array().unwrap();
-            let vbo = gl.create_buffer().unwrap();
             gl.bind_vertex_array(Some(vao));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo.vbo));
 
             let stride = (FLOATS_PER_PARTICLE * size_of::<f32>()) as i32;
-            // a_pos: vec2 @ offset 0
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
-            // a_hue: float @ offset 8
             gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 1, glow::FLOAT, false, stride, 2 * size_of::<f32>() as i32);
+            gl.vertex_attrib_pointer_f32(
+                1,
+                1,
+                glow::FLOAT,
+                false,
+                stride,
+                2 * size_of::<f32>() as i32,
+            );
 
             gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
@@ -76,57 +79,32 @@ impl Renderer {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
 
             Self {
-                gl,
                 program,
                 vao,
-                vbo,
                 u_point_size,
                 u_hue_force,
-                verts: Vec::new(),
             }
         }
     }
 
     pub fn render(
-        &mut self,
-        particles: impl Iterator<Item = (Real, Real, Real)>,
+        &self,
+        gl: &glow::Context,
+        count: usize,
         hue_force_enabled: bool,
         win_size: u32,
     ) {
-        // The GPU vertex attributes are f32; downcast at the boundary so the
-        // simulation can use a wider `Real` without changing GL plumbing.
-        self.verts.clear();
-        for (x, y, hue) in particles {
-            self.verts
-                .extend_from_slice(&[x as f32, y as f32, hue as f32]);
-        }
-        let count = (self.verts.len() / FLOATS_PER_PARTICLE) as i32;
-
-        // NDC radius spans r * (win/2) px; diameter (point size) = r * win.
-        let point_size = (PARTICLE_RADIUS * win_size as Real) as f32;
-
-        let gl = &self.gl;
-        // SAFETY: caller guarantees the same GL context that built this Renderer is current.
-        // The `from_raw_parts` reinterprets `self.verts: Vec<f32>` as bytes — pointer and
-        // length come from the same live vec, and f32 has no invalid bit patterns.
+        let point_size = (PARTICLE_RADIUS * win_size as Real) as _;
+        // Safety: GL context is current; VAO/VBO/program are live.
         unsafe {
             gl.viewport(0, 0, win_size as i32, win_size as i32);
             gl.clear(glow::COLOR_BUFFER_BIT);
-
             if count > 0 {
-                let bytes = core::slice::from_raw_parts(
-                    self.verts.as_ptr() as *const u8,
-                    self.verts.len() * size_of::<f32>(),
-                );
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-
                 gl.use_program(Some(self.program));
                 gl.uniform_1_f32(self.u_point_size.as_ref(), point_size);
                 gl.uniform_1_i32(self.u_hue_force.as_ref(), hue_force_enabled as i32);
-
                 gl.bind_vertex_array(Some(self.vao));
-                gl.draw_arrays(glow::POINTS, 0, count);
+                gl.draw_arrays(glow::POINTS, 0, count as i32);
                 gl.bind_vertex_array(None);
             }
         }
@@ -136,7 +114,7 @@ impl Renderer {
 /// # Safety
 /// A GL context must be current on the calling thread.
 unsafe fn link_program(gl: &glow::Context, vs_src: &str, fs_src: &str) -> glow::Program {
-    // SAFETY: GL context is current per the function's contract above.
+    // Safety: GL context is current per this function's contract.
     unsafe {
         let program = gl.create_program().unwrap();
         let shaders = [(glow::VERTEX_SHADER, vs_src), (glow::FRAGMENT_SHADER, fs_src)];

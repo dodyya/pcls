@@ -1,7 +1,7 @@
 mod app;
-mod array;
-mod grid;
-mod maybe_id;
+mod device_view;
+mod gl_interop;
+mod kernels;
 mod particles;
 mod render;
 mod sim;

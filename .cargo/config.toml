@@ -1,0 +1,10 @@
+# cuda-bindings (transitive via cuda-core/cuda-host) defaults to /usr/local/cuda;
+# Arch Linux puts the toolkit at /opt/cuda. Override here so plain `cargo build`
+# and `cargo oxide build` both find cuda.h.
+[env]
+CUDA_HOME = "/opt/cuda"
+CUDA_TOOLKIT_PATH = "/opt/cuda"
+# rustc-codegen-cuda parameterizes the emitted NVVM IR for this SM; if it
+# doesn't match what libNVVM compiles for at runtime, you get either a parse
+# error or a "no kernel image" runtime miss. RTX 4070 = sm_89.
+CUDA_OXIDE_TARGET = "sm_89"

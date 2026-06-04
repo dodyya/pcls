@@ -1,3 +1,4 @@
+use crate::gl_interop::ParticleVbo;
 use crate::render::Renderer;
 use crate::sim::{PARTICLE_RADIUS, Simulation};
 use crate::types::Real;
@@ -23,7 +24,7 @@ use winit::{
     window::Window,
 };
 
-const PARTICLES_ON_CLICK: usize = 250;
+const PARTICLES_ON_CLICK: usize =(0.01/PARTICLE_RADIUS/PARTICLE_RADIUS)as usize;
 const WINDOW_SIZE: u32 = 1500;
 
 pub struct App {
@@ -45,6 +46,10 @@ struct Visualization {
     gl_context: PossiblyCurrentContext,
     gl_surface: Surface<WindowSurface>,
     renderer: Renderer,
+    // ParticleVbo holds a CUDA-registered GL buffer; drop before gl_context to release
+    // the registration while the context is still bound.
+    vbo: ParticleVbo,
+    gl: glow::Context,
     window: Window,
 }
 
@@ -100,8 +105,7 @@ impl Visualization {
 
         let context_attributes =
             ContextAttributesBuilder::new().build(Some(raw_window_handle));
-        // SAFETY: `raw_window_handle` is valid because `window` is kept alive in `Visualization`
-        // for the lifetime of the context (struct field order ensures context drops before window).
+        // Safety: `window` is kept in `Visualization`; struct field order drops context first.
         let not_current_context = unsafe {
             gl_display
                 .create_context(&gl_config, &context_attributes)
@@ -110,7 +114,7 @@ impl Visualization {
 
         let surface_attributes =
             window.build_surface_attributes(SurfaceAttributesBuilder::new()).unwrap();
-        // SAFETY: same as above — `window` outlives the surface.
+        // Safety: as above — `window` outlives the surface.
         let gl_surface = unsafe {
             gl_display
                 .create_window_surface(&gl_config, &surface_attributes)
@@ -119,20 +123,22 @@ impl Visualization {
 
         let gl_context = not_current_context.make_current(&gl_surface).unwrap();
 
-        // SAFETY: the context was made current just above, so `get_proc_address` returns
-        // valid GL function pointers compatible with the calls glow will make through them.
+        // Safety: context is current; loader returns valid GL function pointers.
         let gl = unsafe {
             glow::Context::from_loader_function_cstr(|s| gl_display.get_proc_address(s).cast())
         };
-        let renderer = Renderer::new(gl);
-
+        let sim = Simulation::new(PARTICLE_RADIUS * 2.0);
+        let vbo = ParticleVbo::new(&gl, sim._ctx.clone(), 64).expect("create particle vbo");
+        let renderer = Renderer::new(&gl, &vbo);
 
         Self {
-            sim: Simulation::new(PARTICLE_RADIUS * 2.0),
+            sim,
             st: SimState::new(),
             gl_context,
             gl_surface,
             renderer,
+            vbo,
+            gl,
             window,
         }
     }
@@ -173,14 +179,12 @@ impl ApplicationHandler for App {
                 vis.st.frame_time = vis.st.last_frame.elapsed();
                 vis.st.last_frame = Instant::now();
 
-                if vis.st.mouse_down {
-                    if let Some((cursor_x, cursor_y)) = vis.st.cursor_pos {
-                        if (0.0..=WINDOW_SIZE as Real).contains(&cursor_x)
-                            && (0.0..=WINDOW_SIZE as Real).contains(&cursor_y)
-                        {
-                            add_particles(cursor_x, cursor_y, &mut vis.sim, &mut vis.st.rng);
-                        }
-                    }
+                if vis.st.mouse_down
+                    && let Some((cursor_x, cursor_y)) = vis.st.cursor_pos
+                    && (0.0..=WINDOW_SIZE as Real).contains(&cursor_x)
+                    && (0.0..=WINDOW_SIZE as Real).contains(&cursor_y)
+                {
+                    add_particles(cursor_x, cursor_y, &mut vis.sim, &mut vis.st.rng);
                 }
 
                 if vis.st.ticker % 16 == 0 {
@@ -193,9 +197,14 @@ impl ApplicationHandler for App {
                 vis.st.ticker = vis.st.ticker.wrapping_add(1);
 
                 vis.sim.step();
+                vis.vbo
+                    .ensure_cap(&vis.gl, vis.sim.pcls.count)
+                    .expect("vbo grow");
+                vis.sim.extract_to_vbo(&mut vis.vbo).expect("extract to vbo");
 
                 vis.renderer.render(
-                    vis.sim.get_drawable(),
+                    &vis.gl,
+                    vis.sim.pcls.count,
                     vis.sim.is_hue_force_enabled(),
                     vis.window.inner_size().width,
                 );
