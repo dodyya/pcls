@@ -1,69 +1,27 @@
-# PCLS - Particle Physics Simulation
+# pcls
 
 ![Demo gif](https://github.com/dodyya/pcls/releases/download/demo-assets/demo.gif)
 
-PCLS is a fast, multithreaded particle physics simulation engine built in Rust. It simulates tens of thousands of particles in real-time, with gravity, collision detection, electrostatic (Coulomb), and additional forces. The engine uses efficient spatial partitioning and multithreaded collision resolution to enable massive scale, and provides direct, punchy pixel-based rendering for a responsive visual experience.
+A particle simulation. Tens of thousands of particles run on the CPU across every core and render as OpenGL points. Each particle has a hue. Similar hues attract, opposite hues repel.
 
-## Features
+There's also a [`cuda`](https://github.com/dodyya/pcls/tree/cuda) branch that runs the same simulation as CUDA kernels on the GPU.
 
-- Real-time simulation of 50,000+ particles (depending on hardware)
-- Gravity (radial or vertical), Coulomb (electrostatic) forces
-- Per-particle mass, radius, charge
-- O(n) collision detection using uniform grid spatial partitioning
-- Multithreaded force & collision resolution (lock-free where possible)
-- Verlet integration for stable, efficient physics
-- Responsive pixel graphics via the `pixels` and `winit` crates
-- Fast animation/video export support
-
-## Controls
-
-- **Run:** `cargo run --release`
-- **Left Click:** Spawn particles continuously
-- **Right Click:** Clear all particles
-- **Space:** Toggle gravity mode
-- **S:** Halt all particles
-- **Q:** Quit application
-- **D:** Toggle particle constraint
-- **M:** Toggle electromagnetic effects
-- **R:** Toggle frame recording (export pixel buffer to stdout for use with `qoip`)
-- **P:** Dump current frame to stdout
-
-
-
-## Technical Overview
-
-- Particles are stored as structs with their state: current/previous positions, acceleration
-- Force calculations and constraint resolution each tick
-- Collision/constraint enforcement and Verlet integration drive particle state
-- Data-oriented design (Array-of-Structures) for cache efficiency
-- Uses threads and atomics for parallel performance
-- Simple, direct pixel drawing for fast, OS-independent display
-
-## Dependencies
-
-- `pixels` - hardware-accelerated rendering
-- `winit` - cross-platform window/events
-- `rayon`, `atomic_float` - efficient parallelism, lock-free shared state
-- `rand` - for random initialization
-
-## Usage
-
-Run with release optimizations:
+## Run
 
 ```bash
 cargo run --release
 ```
 
-- Press `R` while running to enable frame recording (to stdout)
-- Pipe output to `qoip` for video encoding
+## Controls
 
-## Further Development Ideas
+- Left click (or drag): spawn particles
+- Right click: clear
+- Space: toggle gravity (radial vs. downward)
+- M: toggle the hue force
+- D: toggle the donut boundary
+- S: halt all motion
+- Q: quit
 
-- Barnes-Hut/QuadTree for scalable long-range force calculations
-- GPU compute (WGPU) for massive parallel acceleration
-- More complex physics modes: fluids, soft bodies, thermal/magnetic effects
+## Internals
 
-## References
-
-- Verlet Integration: https://www.youtube.com/watch?v=lS_qeBy3aQI
-- Multithreading: https://www.youtube.com/watch?v=9IULfQH7E90
+Particles update with Verlet integration over a uniform spatial grid for O(n) collision detection. The heavy work is parallelized with `rayon`: overlaps resolve in two passes over alternating grid columns, so neighboring columns never touch the same particle at once, and the hue force accumulates through lock-free atomics. Positions and hues upload to a VBO and draw as GL point sprites, with HSV-to-RGB and the circular mask handled in the fragment shader.
