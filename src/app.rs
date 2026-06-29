@@ -60,6 +60,7 @@ struct SimState {
     ticker: u8,
     rng: ThreadRng,
     mouse_down: bool,
+    shift_down: bool,
 }
 
 impl SimState {
@@ -71,6 +72,7 @@ impl SimState {
             ticker: 0,
             rng: rand::thread_rng(),
             mouse_down: false,
+            shift_down: false,
         }
     }
 }
@@ -179,12 +181,27 @@ impl ApplicationHandler for App {
                 vis.st.frame_time = vis.st.last_frame.elapsed();
                 vis.st.last_frame = Instant::now();
 
-                if vis.st.mouse_down
-                    && let Some((cursor_x, cursor_y)) = vis.st.cursor_pos
-                    && (0.0..=WINDOW_SIZE as Real).contains(&cursor_x)
-                    && (0.0..=WINDOW_SIZE as Real).contains(&cursor_y)
-                {
-                    add_particles(cursor_x, cursor_y, &mut vis.sim, &mut vis.st.rng);
+                let inner = vis.window.inner_size();
+                let (win_w, win_h) = (inner.width as Real, inner.height as Real);
+                let cursor_in_window = vis.st.cursor_pos.filter(|(x, y)| {
+                    (0.0..=win_w).contains(x) && (0.0..=win_h).contains(y)
+                });
+                if vis.st.mouse_down && vis.st.shift_down {
+                    if let Some((cx, cy)) = cursor_in_window {
+                        let (sx, sy) = cursor_to_sim(cx, cy, win_w, win_h);
+                        vis.sim.set_pull_target(Some((sx, sy)));
+                    } else {
+                        vis.sim.set_pull_target(None);
+                    }
+                } else {
+                    vis.sim.set_pull_target(None);
+                    if vis.st.mouse_down
+                        && let Some((cursor_x, cursor_y)) = cursor_in_window
+                    {
+                        add_particles(
+                            cursor_x, cursor_y, win_w, win_h, &mut vis.sim, &mut vis.st.rng,
+                        );
+                    }
                 }
 
                 if vis.st.ticker % 16 == 0 {
@@ -212,6 +229,9 @@ impl ApplicationHandler for App {
             }
             we::CursorMoved { position, .. } => {
                 vis.st.cursor_pos = Some((position.x as Real, position.y as Real));
+            }
+            we::ModifiersChanged(modifiers) => {
+                vis.st.shift_down = modifiers.state().shift_key();
             }
             we::MouseInput {
                 state: winit::event::ElementState::Pressed,
@@ -271,9 +291,25 @@ impl ApplicationHandler for App {
     }
 }
 
-fn add_particles(cursor_x: Real, cursor_y: Real, sim: &mut Simulation, rng: &mut ThreadRng) {
-    let sim_x = (cursor_x / WINDOW_SIZE as Real) * 2.0 - 1.0;
-    let sim_y = 1.0 - (cursor_y / WINDOW_SIZE as Real) * 2.0;
+// Cursor coords come in as physical pixels, and on fractional-scale Wayland the actual
+// surface size can differ from WINDOW_SIZE; divide by the live inner_size to stay in sync
+// with the GL viewport (which also uses inner_size).
+fn cursor_to_sim(cursor_x: Real, cursor_y: Real, win_w: Real, win_h: Real) -> (Real, Real) {
+    (
+        (cursor_x / win_w) * 2.0 - 1.0,
+        1.0 - (cursor_y / win_h) * 2.0,
+    )
+}
+
+fn add_particles(
+    cursor_x: Real,
+    cursor_y: Real,
+    win_w: Real,
+    win_h: Real,
+    sim: &mut Simulation,
+    rng: &mut ThreadRng,
+) {
+    let (sim_x, sim_y) = cursor_to_sim(cursor_x, cursor_y, win_w, win_h);
 
     for _ in 0..PARTICLES_ON_CLICK {
         let hue: Real = rng.gen_range(0.0..1.0);

@@ -88,22 +88,29 @@ pub mod kernels {
 
     use super::*;
 
+    // mode: 0 = downward gravity (target ignored); 1 = pull toward (target_x, target_y).
+    // The toward-a-point path is shared between space-bar center gravity (target = origin)
+    // and shift+left-drag mouse pull (target = cursor in sim space).
     #[kernel]
     pub fn gravity(
         positions: &[XyHue],
         mut integ: DisjointSlice<RawParticle>,
-        g_toward_center: u32,
+        mode: u32,
+        target_x: Real,
+        target_y: Real,
     ) {
         let idx = thread::index_1d();
         let i = idx.get();
         if let Some(p) = integ.get_mut(idx) {
-            if g_toward_center != 0 {
+            if mode != 0 {
                 let pos = positions[i];
-                let r2 = pos.x * pos.x + pos.y * pos.y;
+                let dx = pos.x - target_x;
+                let dy = pos.y - target_y;
+                let r2 = dx * dx + dy * dy;
                 let inv_r = fast_rsqrt(r2);
                 let inv_falloff = 1.0 / (r2 + ANTI_BHOLE);
-                p.ax = -GRAVITY * pos.x * inv_r * inv_falloff;
-                p.ay = -GRAVITY * pos.y * inv_r * inv_falloff;
+                p.ax = -GRAVITY * dx * inv_r * inv_falloff;
+                p.ay = -GRAVITY * dy * inv_r * inv_falloff;
             } else {
                 p.ax = 0.0;
                 p.ay = -GRAVITY;

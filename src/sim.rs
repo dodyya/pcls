@@ -249,7 +249,12 @@ impl Simulation {
         if n == 0 {
             return;
         }
-        let g = self.pcls.g_toward_center as u32;
+        // pull_target (shift+drag) wins over g_toward_center (space-bar) when both are set.
+        let (mode, tx, ty) = match self.pcls.pull_target {
+            Some((x, y)) => (1u32, x, y),
+            None if self.pcls.g_toward_center => (1u32, 0.0, 0.0),
+            None => (0u32, 0.0, 0.0),
+        };
         let pos_view = self.pos_view(n);
         let mut integ_view = self.integ_view(n);
         self.module
@@ -258,7 +263,9 @@ impl Simulation {
                 LaunchConfig::for_num_elems(n as u32),
                 &pos_view,
                 &mut integ_view,
-                g,
+                mode,
+                tx,
+                ty,
             )
             .expect("gravity kernel");
     }
@@ -539,6 +546,10 @@ impl Simulation {
 
     pub fn toggle_gravity(&mut self) {
         self.pcls.g_toward_center = !self.pcls.g_toward_center;
+    }
+
+    pub fn set_pull_target(&mut self, target: Option<(Real, Real)>) {
+        self.pcls.pull_target = target;
     }
 
     pub fn toggle_hue_force(&mut self) {

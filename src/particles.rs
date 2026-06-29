@@ -41,6 +41,9 @@ pub struct Particles {
     pub g_toward_center: bool,
     pub hue_force_enabled: bool,
     pub donut_enabled: bool,
+    // When Some, gravity pulls toward this sim-space point (overrides g_toward_center).
+    // Set per-frame by the app while shift+left is held; cleared on release.
+    pub pull_target: Option<(Real, Real)>,
 }
 
 impl Particles {
@@ -52,6 +55,7 @@ impl Particles {
             g_toward_center: false,
             hue_force_enabled: false,
             donut_enabled: true,
+            pull_target: None,
         }
     }
 
